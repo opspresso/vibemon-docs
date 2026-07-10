@@ -479,7 +479,7 @@ echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/ttyACM0</
                     <tbody>
                         <tr><td><code>state</code></td><td>string</td><td>start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required)</td></tr>
                         <tr><td><code>project</code></td><td>string</td><td>Project name (required)</td></tr>
-                        <tr><td><code>character</code></td><td>string</td><td>clawd, codex, kiro, or claw (required)</td></tr>
+                        <tr><td><code>character</code></td><td>string</td><td>clawd, codex, kiro, or claw (required); daangni also available via manual character config</td></tr>
                         <tr><td><code>tool</code></td><td>string</td><td>Tool name (Bash, Read, Edit, etc.) (optional)</td></tr>
                         <tr><td><code>model</code></td><td>string</td><td>Model name (opus, sonnet, etc.) (optional)</td></tr>
                         <tr><td><code>memory</code></td><td>number</td><td>Context window usage 0-100 (optional)</td></tr>
@@ -542,7 +542,6 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>fileCreated</code> / <code>fileEdited</code> / <code>fileDeleted</code></td><td>working</td></tr>
                         <tr><td><code>preToolUse</code></td><td>working</td></tr>
                         <tr><td><code>postToolUse</code></td><td>thinking</td></tr>
-                        <tr><td><code>preCompact</code></td><td>packing</td></tr>
                         <tr><td><code>agentStop</code> / <code>stop</code></td><td>done</td></tr>
                     </tbody>
                 </table>

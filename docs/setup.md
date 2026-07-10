@@ -137,6 +137,7 @@ chmod +x ~/.codex/hooks/vibemon.py
 Enable Codex hooks in `~/.codex/config.toml`:
 ```toml
 [features]
+hooks = true
 codex_hooks = true
 ```
 
@@ -231,6 +232,9 @@ Merge the following hooks into your existing `~/.kiro/agents/default.json`:
     ],
     "preToolUse": [
       { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "preToolUse"] }
+    ],
+    "postToolUse": [
+      { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "postToolUse"] }
     ],
     "stop": [
       { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "agentStop"] }
@@ -334,7 +338,7 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 ### Codex CLI
 | Issue | Solution |
 |-------|----------|
-| Hook not triggering | Check `~/.codex/hooks.json` and ensure `codex_hooks = true` in `~/.codex/config.toml` |
+| Hook not triggering | Check `~/.codex/hooks.json` and ensure `hooks = true` and `codex_hooks = true` in `~/.codex/config.toml` |
 | No updates after install | Restart the Codex session after editing hook files |
 
 ### Kiro IDE

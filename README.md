@@ -252,7 +252,7 @@ curl -X POST https://vibemon.io/api/status \
 |-------|------|-------------|
 | `state` | string | start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required) |
 | `project` | string | Project name (required) |
-| `character` | string | clawd, codex, kiro, or claw (required) |
+| `character` | string | clawd, codex, kiro, or claw (required); daangni also available via manual character config |
 | `tool` | string | Tool name (Bash, Read, Edit, etc.) (optional) |
 | `model` | string | Model name (opus, sonnet, etc.) (optional) |
 | `memory` | number | Context window usage 0-100 (optional) |
@@ -313,7 +313,6 @@ Codex hooks are experimental, and Windows support is currently disabled for hook
 | fileCreated / fileEdited / fileDeleted | working |
 | preToolUse | working |
 | postToolUse | thinking |
-| preCompact | packing |
 | agentStop / stop | done |
 
 ### OpenClaw
