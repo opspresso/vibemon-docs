@@ -15,7 +15,7 @@
       "character": {
         "type": "string",
         "default": "claw",
-        "description": "Character to display (clawd, kiro, claw)"
+        "description": "Character to display (clawd, codex, kiro, claw)"
       },
       "serialEnabled": {
         "type": "boolean",
@@ -62,7 +62,7 @@
     },
     "character": {
       "label": "Character",
-      "help": "clawd (orange), kiro (white), claw (red)"
+      "help": "clawd (orange), codex (green), kiro (white), claw (red)"
     },
     "serialEnabled": {
       "label": "Serial Output",
@@ -88,7 +88,7 @@
     },
     "vibemonToken": {
       "label": "VibeMon API Token",
-      "help": "Access token from VibeMon dashboard",
+      "help": "Your token (8-64 chars, a-z, 0-9, _, -)",
       "advanced": true
     },
     "debug": {

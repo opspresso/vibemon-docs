@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Vibe Monitor Hook for Claude Code
+VibeMon Hook for Claude Code
 Desktop App + ESP32 (USB Serial / HTTP)
 Note: Model and Memory are read from statusline.py's cache file
 """
@@ -26,6 +26,7 @@ from urllib.request import Request, urlopen
 # Configuration Loading
 # ============================================================================
 
+
 def load_config() -> None:
     """Load configuration from config.json and set as environment variables."""
     config_file = Path.home() / ".vibemon" / "config.json"
@@ -43,7 +44,10 @@ def load_config() -> None:
         "debug": ("DEBUG", lambda v: "1" if v else "0"),
         "cache_path": ("VIBEMON_CACHE_PATH", str),
         "auto_launch": ("VIBEMON_AUTO_LAUNCH", lambda v: "1" if v else "0"),
-        "http_urls": ("VIBEMON_HTTP_URLS", lambda v: ",".join(v) if isinstance(v, list) else str(v)),
+        "http_urls": (
+            "VIBEMON_HTTP_URLS",
+            lambda v: ",".join(v) if isinstance(v, list) else str(v),
+        ),
         "serial_port": ("VIBEMON_SERIAL_PORT", str),
         "vibemon_url": ("VIBEMON_URL", str),
         "vibemon_token": ("VIBEMON_TOKEN", str),
@@ -67,7 +71,9 @@ DEBUG = os.environ.get("DEBUG", "0") == "1"
 # Error messages
 ERR_NO_TARGET = '{"error":"No monitor target available. Set VIBEMON_HTTP_URLS or VIBEMON_SERIAL_PORT"}'
 ERR_NO_ESP32 = '{"error":"No ESP32 target available. Set VIBEMON_HTTP_URLS (with ESP32 URL) or VIBEMON_SERIAL_PORT"}'
-ERR_INVALID_MODE = '{"error":"Invalid mode: %s. Valid modes: first-project, on-thinking"}'
+ERR_INVALID_MODE = (
+    '{"error":"Invalid mode: %s. Valid modes: first-project, on-thinking"}'
+)
 
 VALID_LOCK_MODES = frozenset(["first-project", "on-thinking"])
 
@@ -118,7 +124,7 @@ def get_config() -> Config:
             http_urls=parse_http_urls(os.environ.get("VIBEMON_HTTP_URLS")),
             serial_port=os.environ.get("VIBEMON_SERIAL_PORT"),
             cache_path=os.path.expanduser(
-                os.environ.get("VIBEMON_CACHE_PATH", "~/.vibemon/cache/statusline.json")
+                os.environ.get("VIBEMON_CACHE_PATH", "~/.vibemon/cache/projects.json")
             ),
             auto_launch=os.environ.get("VIBEMON_AUTO_LAUNCH", "0") == "1",
             vibemon_url=os.environ.get("VIBEMON_URL"),
@@ -130,6 +136,7 @@ def get_config() -> Config:
 # ============================================================================
 # Utility Functions
 # ============================================================================
+
 
 def debug_log(msg: str) -> None:
     """Print debug message to stderr."""
@@ -168,6 +175,7 @@ def parse_json(data: str) -> dict[str, Any]:
     except (json.JSONDecodeError, TypeError):
         return {}
 
+
 # ============================================================================
 # State Functions
 # ============================================================================
@@ -179,6 +187,9 @@ EVENT_STATE_MAP: dict[str, str] = {
     "PreToolUse": "working",
     "PreCompact": "packing",
     "Notification": "notification",
+    "PermissionRequest": "notification",
+    "SubagentStart": "working",
+    "SessionEnd": "done",
     "Stop": "done",
 }
 
@@ -192,7 +203,7 @@ def get_git_root(directory: str) -> str | None:
             ["git", "-C", directory, "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
-            timeout=2
+            timeout=2,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -256,6 +267,36 @@ def get_project_metadata(project: str) -> dict[str, Any]:
         return {}
 
 
+def get_usage_metadata() -> dict[str, Any]:
+    """Get plan-usage percentages from statusline's usage cache.
+
+    statusline.py caches plan usage (from the statusline payload's official
+    `rate_limits` field, or a `claude -p "/usage"` subprocess as fallback) next
+    to the project cache (~/.vibemon/cache/usage.json). Returns {usage5h,
+    usageWeek} for the 5-hour session window and the weekly (all-models)
+    window. Keys are omitted when the cache is missing or a value is
+    unavailable, so the API can remove stale values instead of overwriting
+    them with 0.
+    """
+    config = get_config()
+    usage_path = os.path.join(os.path.dirname(config.cache_path), "usage.json")
+
+    try:
+        with open(usage_path) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, IOError):
+        return {}
+
+    result: dict[str, Any] = {}
+    session = data.get("session")
+    if isinstance(session, dict) and isinstance(session.get("pct"), int):
+        result["usage5h"] = session["pct"]
+    week = data.get("week_all")
+    if isinstance(week, dict) and isinstance(week.get("pct"), int):
+        result["usageWeek"] = week["pct"]
+    return result
+
+
 def get_terminal_id() -> str:
     """Get terminal ID from environment."""
     iterm_session = os.environ.get("ITERM_SESSION_ID")
@@ -272,6 +313,7 @@ def get_terminal_id() -> str:
 def build_payload(state: str, tool: str, project: str) -> dict[str, Any]:
     """Build payload dict for sending to monitor."""
     metadata = get_project_metadata(project)
+    usage = get_usage_metadata()
 
     return {
         "state": state,
@@ -281,25 +323,28 @@ def build_payload(state: str, tool: str, project: str) -> dict[str, Any]:
         "memory": metadata.get("memory", 0),
         "character": CHARACTER,
         "terminalId": get_terminal_id(),
+        **usage,
     }
+
 
 # ============================================================================
 # Low-Level Send Functions
 # ============================================================================
 
+
 def _get_serial_lock_path(port: str) -> str:
     """Get lock file path for serial port."""
-    return f"/tmp/vibe-monitor-serial-{port.replace('/', '_')}.lock"
+    return f"/tmp/vibemon-serial-{port.replace('/', '_')}.lock"
 
 
 def _get_serial_debounce_path(port: str) -> str:
     """Get debounce file path for serial port."""
-    return f"/tmp/vibe-monitor-serial-{port.replace('/', '_')}.debounce"
+    return f"/tmp/vibemon-serial-{port.replace('/', '_')}.debounce"
 
 
 def _get_serial_debounce_lock_path(port: str) -> str:
     """Get debounce lock file path for serial port."""
-    return f"/tmp/vibe-monitor-serial-{port.replace('/', '_')}.dlock"
+    return f"/tmp/vibemon-serial-{port.replace('/', '_')}.dlock"
 
 
 def _acquire_lock(lock_fd: int, max_retries: int = SERIAL_LOCK_MAX_RETRIES) -> bool:
@@ -326,7 +371,9 @@ def send_serial_raw(port: str, data: str) -> bool:
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
 
         if not _acquire_lock(lock_fd):
-            debug_log(f"Failed to acquire serial lock after {SERIAL_LOCK_MAX_RETRIES} attempts")
+            debug_log(
+                f"Failed to acquire serial lock after {SERIAL_LOCK_MAX_RETRIES} attempts"
+            )
             return False
 
         try:
@@ -417,7 +464,9 @@ def send_serial(port: str, data: str) -> bool:
                 pass
 
 
-def send_http_post(url: str, endpoint: str, data: str | None = None) -> tuple[bool, str | None]:
+def send_http_post(
+    url: str, endpoint: str, data: str | None = None
+) -> tuple[bool, str | None]:
     """Send HTTP POST request."""
     try:
         full_url = f"{url}{endpoint}"
@@ -456,14 +505,20 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
     try:
         api_url = f"{url.rstrip('/')}/status"
         # VibeMon API doesn't need terminalId
-        api_payload = json.dumps({
+        api_body: dict[str, Any] = {
             "state": payload.get("state", ""),
             "project": payload.get("project", ""),
             "tool": payload.get("tool", ""),
             "model": payload.get("model", ""),
             "memory": payload.get("memory", 0),
             "character": payload.get("character", CHARACTER),
-        })
+        }
+        # Plan-usage fields are optional; include only when available so the API
+        # REMOVEs stale values instead of overwriting them with 0.
+        for key in ("usage5h", "usageWeek"):
+            if key in payload:
+                api_body[key] = payload[key]
+        api_payload = json.dumps(api_body)
 
         req = Request(
             api_url,
@@ -486,6 +541,7 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
 # ============================================================================
 # Target Resolution
 # ============================================================================
+
 
 def _send_http_request(
     url: str, endpoint: str, data: str | None, method: str
@@ -567,9 +623,11 @@ def try_all_targets(
 
     return False, None
 
+
 # ============================================================================
 # Command Functions
 # ============================================================================
+
 
 def _print_result(result: str | None, fallback: str) -> None:
     """Print result or fallback message."""
@@ -679,7 +737,9 @@ def send_reboot() -> bool:
     serial_data = json.dumps({"command": "reboot"})
 
     # ESP32 only - don't include localhost (Desktop)
-    success, result = try_all_targets("/reboot", None, serial_data, include_localhost=False)
+    success, result = try_all_targets(
+        "/reboot", None, serial_data, include_localhost=False
+    )
 
     if success:
         _print_result(result, '{"success":true,"rebooting":true}')
@@ -689,9 +749,11 @@ def send_reboot() -> bool:
     print(ERR_NO_ESP32)
     return False
 
+
 # ============================================================================
 # Send to All Targets (for status updates)
 # ============================================================================
+
 
 def is_monitor_running(url: str) -> bool:
     """Check if monitor is running."""
@@ -727,7 +789,7 @@ def launch_desktop() -> None:
         shell = get_user_shell()
         debug_log(f"Using shell: {shell}")
         subprocess.Popen(
-            [shell, "-l", "-c", "npx vibe-monitor@latest"],
+            [shell, "-l", "-c", "npx vibemon@latest"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -783,10 +845,14 @@ def send_to_all(payload: dict[str, Any], is_start: bool = False) -> None:
 
     # Add VibeMon API target if configured
     if config.vibemon_url and config.vibemon_token and payload.get("project"):
-        tasks.append((
-            "VibeMon API",
-            lambda: send_vibemon_api(config.vibemon_url, config.vibemon_token, payload)
-        ))
+        tasks.append(
+            (
+                "VibeMon API",
+                lambda: send_vibemon_api(
+                    config.vibemon_url, config.vibemon_token, payload
+                ),
+            )
+        )
 
     if not tasks:
         return
@@ -802,13 +868,16 @@ def send_to_all(payload: dict[str, Any], is_start: bool = False) -> None:
             except Exception as e:
                 debug_log(f"{name} failed with error: {e}")
 
+
 # ============================================================================
 # Command Handlers
 # ============================================================================
 
 # Command handler mapping
 COMMAND_HANDLERS: dict[str, Any] = {
-    "--lock": lambda args: send_lock(args[0] if args else os.path.basename(os.getcwd())),
+    "--lock": lambda args: send_lock(
+        args[0] if args else os.path.basename(os.getcwd())
+    ),
     "--unlock": lambda args: send_unlock(),
     "--status": lambda args: get_status(),
     "--lock-mode": lambda args: set_lock_mode(args[0]) if args else get_lock_mode(),
@@ -827,6 +896,7 @@ def handle_command(cmd: str, args: list[str]) -> bool | None:
 # ============================================================================
 # Main
 # ============================================================================
+
 
 def main() -> None:
     """Main entry point."""

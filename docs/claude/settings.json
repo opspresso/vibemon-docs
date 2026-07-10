@@ -2,32 +2,110 @@
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
       {
-        "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PreToolUse": [
       {
-        "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PreCompact": [
       {
-        "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Notification": [
       {
-        "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
       }
     ]
   },

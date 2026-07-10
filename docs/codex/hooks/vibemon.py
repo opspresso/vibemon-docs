@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-VibeMon Hook for Kiro IDE
+VibeMon Hook for Codex CLI
 Desktop App + ESP32 (USB Serial / HTTP)
+Note: Codex provides the active model directly in hook payloads
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ def load_config() -> None:
     # Map config keys to environment variables
     key_mapping = {
         "debug": ("DEBUG", lambda v: "1" if v else "0"),
+        "cache_path": ("VIBEMON_CACHE_PATH", str),
         "auto_launch": ("VIBEMON_AUTO_LAUNCH", lambda v: "1" if v else "0"),
         "http_urls": (
             "VIBEMON_HTTP_URLS",
@@ -88,7 +90,7 @@ HTTP_TIMEOUT_SECONDS = 5
 DESKTOP_LAUNCH_WAIT_SECONDS = 3
 
 # Character configuration
-CHARACTER = "kiro"
+CHARACTER = "codex"
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,7 @@ class Config:
 
     http_urls: tuple[str, ...]
     serial_port: str | None
+    cache_path: str
     auto_launch: bool
     vibemon_url: str | None
     vibemon_token: str | None
@@ -120,6 +123,9 @@ def get_config() -> Config:
         _config = Config(
             http_urls=parse_http_urls(os.environ.get("VIBEMON_HTTP_URLS")),
             serial_port=os.environ.get("VIBEMON_SERIAL_PORT"),
+            cache_path=os.path.expanduser(
+                os.environ.get("VIBEMON_CACHE_PATH", "~/.vibemon/cache/projects.json")
+            ),
             auto_launch=os.environ.get("VIBEMON_AUTO_LAUNCH", "0") == "1",
             vibemon_url=os.environ.get("VIBEMON_URL"),
             vibemon_token=os.environ.get("VIBEMON_TOKEN"),
@@ -176,17 +182,16 @@ def parse_json(data: str) -> dict[str, Any]:
 
 # Event to state mapping (immutable)
 EVENT_STATE_MAP: dict[str, str] = {
-    "agentSpawn": "start",
-    "promptSubmit": "thinking",
-    "userPromptSubmit": "thinking",
-    "fileCreated": "working",
-    "fileDeleted": "working",
-    "fileEdited": "working",
-    "preToolUse": "working",
-    "postToolUse": "thinking",
-    "preCompact": "packing",
-    "agentStop": "done",
-    "stop": "done",
+    "SessionStart": "start",
+    "UserPromptSubmit": "thinking",
+    "PreToolUse": "working",
+    "PermissionRequest": "notification",
+    "PostToolUse": "thinking",
+    "SubagentStart": "working",
+    "SubagentStop": "thinking",
+    "PreCompact": "packing",
+    "PostCompact": "thinking",
+    "Stop": "done",
 }
 
 
@@ -245,6 +250,24 @@ def get_state(event_name: str, permission_mode: str = "default") -> str:
     return state
 
 
+def get_project_metadata(project: str) -> dict[str, Any]:
+    """Get model and memory from cache for a project."""
+    if not project:
+        return {}
+
+    config = get_config()
+
+    if not os.path.exists(config.cache_path):
+        return {}
+
+    try:
+        with open(config.cache_path) as f:
+            cache = json.load(f)
+        return cache.get(project, {})
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
 def get_terminal_id() -> str:
     """Get terminal ID from environment."""
     iterm_session = os.environ.get("ITERM_SESSION_ID")
@@ -258,14 +281,16 @@ def get_terminal_id() -> str:
     return ""
 
 
-def build_payload(state: str, tool: str, project: str) -> dict[str, Any]:
+def build_payload(state: str, tool: str, project: str, model_name: str) -> dict[str, Any]:
     """Build payload dict for sending to monitor."""
+    metadata = get_project_metadata(project)
+
     return {
         "state": state,
         "tool": tool,
         "project": project,
-        "model": "",
-        "memory": 0,
+        "model": model_name or metadata.get("model", ""),
+        "memory": metadata.get("memory", 0),
         "character": CHARACTER,
         "terminalId": get_terminal_id(),
     }
@@ -447,7 +472,7 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
     Body: { state, project, tool, model, memory, character }
     """
     try:
-        api_url = f"{url.rstrip('/')}/status"
+        api_url = f"{url.rstrip('/')}/api/status"
         # VibeMon API doesn't need terminalId
         api_payload = json.dumps(
             {
@@ -858,16 +883,17 @@ def main() -> None:
     cwd = data.get("cwd", "")
     transcript_path = data.get("transcript_path", "")
     permission_mode = data.get("permission_mode", "default")
+    model_name = data.get("model", "")
 
     project_name = get_project_name(cwd, transcript_path)
     state = get_state(event_name, permission_mode)
 
-    debug_log(f"Event: {event_name}, Tool: {tool_name}, Project: {project_name}")
+    debug_log(f"Event: {event_name}, Tool: {tool_name}, Project: {project_name}, Model: {model_name}")
 
-    payload = build_payload(state, tool_name, project_name)
+    payload = build_payload(state, tool_name, project_name, model_name)
     debug_log(f"Payload: {json.dumps(payload)}")
 
-    is_start = event_name == "promptSubmit"
+    is_start = event_name == "SessionStart"
     send_to_all(payload, is_start)
 
 

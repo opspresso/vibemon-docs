@@ -1,9 +1,22 @@
 {
-  "debug": false,
-  "cache_path": "~/.vibemon/cache/statusline.json",
   "auto_launch": false,
+  "cache_path": "~/.vibemon/cache/projects.json",
+  "debug": false,
   "http_urls": [],
   "serial_port": null,
-  "vibemon_url": "https://vibemon.io",
-  "vibemon_token": ""
+  "show_cost": true,
+  "show_duration": false,
+  "show_git": true,
+  "show_lines": true,
+  "show_memory": true,
+  "show_model": true,
+  "show_project": true,
+  "show_tokens": true,
+  "show_usage_reset": true,
+  "show_usage": true,
+  "show_version": true,
+  "usage_enabled": true,
+  "usage_refresh_seconds": 600,
+  "vibemon_token": "",
+  "vibemon_url": "https://vibemon.io"
 }

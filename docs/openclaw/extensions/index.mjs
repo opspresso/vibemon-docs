@@ -30,6 +30,7 @@ let doneTimer = null;
 let ttyPath = null;
 let lastSendTime = 0;
 let cachedModel = null;
+let lastMemoryPercent = null;
 
 // Configuration (set in register)
 let config = {
@@ -59,6 +60,59 @@ function debug(message) {
   if (config.debug && logger) {
     logger.info?.(`[vibemon] ${message}`);
   }
+}
+
+/**
+ * Clamp a raw percentage-ish number into an integer 0-100, or null if not
+ * a finite number.
+ */
+function clampPercent(value) {
+  if (!Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+/**
+ * Extract a 0-100 context-window usage percentage from an OpenClaw
+ * model-call event (model_call_ended / reply_payload_sending), if present.
+ *
+ * Field shapes below (usageState.context.*, contextTokenBudget + usage.*)
+ * come from OpenClaw's hook docs but aren't pinned to a stable schema
+ * version across releases, so every access is optional-chained: a
+ * missing/renamed field falls back to null (no memory data) instead of
+ * throwing, matching the previous "memory: 0" behavior rather than
+ * breaking status reporting.
+ */
+function extractMemoryPercent(event) {
+  if (!event || typeof event !== "object") return null;
+
+  const usageState = event.usageState;
+  const ctx = usageState && typeof usageState === "object"
+    ? usageState.context || usageState.contextWindow
+    : null;
+  if (ctx && typeof ctx === "object") {
+    if (typeof ctx.percentage === "number") {
+      const pct = clampPercent(ctx.percentage);
+      if (pct !== null) return pct;
+    }
+    const used = ctx.usedTokens ?? ctx.used_tokens;
+    const budget = ctx.budgetTokens ?? ctx.budget_tokens;
+    if (typeof used === "number" && typeof budget === "number" && budget > 0) {
+      const pct = clampPercent((used / budget) * 100);
+      if (pct !== null) return pct;
+    }
+  }
+
+  const budget = event.contextTokenBudget;
+  const usage = event.usage;
+  if (typeof budget === "number" && budget > 0 && usage && typeof usage === "object") {
+    const used = usage.totalTokens ?? usage.total_tokens ?? usage.inputTokens ?? usage.input_tokens;
+    if (typeof used === "number") {
+      const pct = clampPercent((used / budget) * 100);
+      if (pct !== null) return pct;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -198,7 +252,7 @@ function launchDesktop() {
 
   try {
     const shell = process.env.SHELL || "/bin/sh";
-    const child = spawn(shell, ["-l", "-c", "npx vibe-monitor@latest"], {
+    const child = spawn(shell, ["-l", "-c", "npx vibemon@latest"], {
       detached: true,
       stdio: "ignore",
     });
@@ -213,7 +267,7 @@ function launchDesktop() {
  * Auto-launch Desktop App if not running
  */
 async function autoLaunchDesktop() {
-  if (!config.autoLaunch || !config.httpEnabled) return;
+  if (!config.autoLaunch) return;
 
   // Only auto-launch if Desktop App URL is configured
   const desktopUrl = getDesktopAppUrl();
@@ -287,7 +341,7 @@ async function sendVibeMonApi(payload) {
     project: project,
     tool: payload.tool || "",
     model: payload.model || "",
-    memory: 0, // OpenClaw doesn't have memory info
+    memory: typeof payload.memory === "number" ? payload.memory : 0,
     character: payload.character || CHARACTER,
   };
 
@@ -340,6 +394,11 @@ function buildPayload(state, extra = {}) {
   const model = readModelFromConfig();
   if (model) {
     payload.model = model;
+  }
+
+  // Add context-window usage if a model-call event has reported one
+  if (lastMemoryPercent !== null) {
+    payload.memory = lastMemoryPercent;
   }
 
   return payload;
@@ -491,6 +550,27 @@ const plugin = {
       // Only go back to thinking if not waiting for done
       if (!doneTimer) {
         sendStatus("thinking");
+      }
+    });
+
+    // Context-window usage (best-effort; exact fields vary by OpenClaw
+    // version, see extractMemoryPercent). Only enriches the next status
+    // send -- never drives state transitions on its own.
+    api.on("model_call_ended", (event) => {
+      try {
+        const pct = extractMemoryPercent(event);
+        if (pct !== null) lastMemoryPercent = pct;
+      } catch (err) {
+        debug(`model_call_ended usage extraction failed: ${err.message}`);
+      }
+    });
+
+    api.on("reply_payload_sending", (event) => {
+      try {
+        const pct = extractMemoryPercent(event);
+        if (pct !== null) lastMemoryPercent = pct;
+      } catch (err) {
+        debug(`reply_payload_sending usage extraction failed: ${err.message}`);
       }
     });
 

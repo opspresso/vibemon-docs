@@ -4,15 +4,15 @@
       "vibemon-bridge": {
         "enabled": true,
         "config": {
-          "projectName": "OpenClaw",
-          "character": "claw",
           "autoLaunch": false,
-          "serialEnabled": false,
+          "character": "claw",
+          "debug": false,
           "httpEnabled": false,
           "httpUrls": ["http://127.0.0.1:19280"],
-          "vibemonUrl": "https://vibemon.io",
+          "projectName": "OpenClaw",
+          "serialEnabled": false,
           "vibemonToken": "",
-          "debug": false
+          "vibemonUrl": "https://vibemon.io"
         }
       }
     }
