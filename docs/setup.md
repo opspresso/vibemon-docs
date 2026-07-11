@@ -69,7 +69,7 @@ Create `~/.vibemon/config.json` (not needed for OpenClaw):
 {
   "debug": false,
   "cache_path": "~/.vibemon/cache/projects.json",
-  "auto_launch": false,
+  "auto_launch": true,
   "http_urls": [],
   "serial_port": null,
   "vibemon_url": "https://vibemon.io",

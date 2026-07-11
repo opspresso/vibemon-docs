@@ -163,7 +163,7 @@ def load_or_create_config(config_path: Path, example_content: str) -> dict:
         return {
             "debug": False,
             "cache_path": "~/.vibemon/cache/projects.json",
-            "auto_launch": False,
+            "auto_launch": True,
             "http_urls": [],
             "serial_port": None,
             "vibemon_url": "https://vibemon.io",

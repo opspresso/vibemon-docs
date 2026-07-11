@@ -1,10 +1,8 @@
 {
-  "auto_launch": true,
-  "cache_path": "~/.vibemon/cache/projects.json",
   "debug": false,
-  "http_urls": [
-    "http://localhost:19280"
-  ],
+  "cache_path": "~/.vibemon/cache/projects.json",
+  "auto_launch": true,
+  "http_urls": [],
   "serial_port": null,
   "show_cost": true,
   "show_duration": false,

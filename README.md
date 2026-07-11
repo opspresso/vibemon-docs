@@ -44,7 +44,7 @@ After installation, edit `~/.vibemon/config.json` to configure your targets:
 {
   "debug": false,
   "cache_path": "~/.vibemon/cache/projects.json",
-  "auto_launch": false,
+  "auto_launch": true,
   "http_urls": [],
   "serial_port": null,
   "vibemon_url": "https://vibemon.io",
