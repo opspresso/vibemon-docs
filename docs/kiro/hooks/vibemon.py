@@ -442,12 +442,12 @@ def send_http_get(url: str, endpoint: str) -> tuple[bool, str | None]:
 def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
     """Send status to VibeMon API with Bearer token authentication.
 
-    API: POST /status
+    API: POST /api/status
     Headers: Authorization: Bearer <token>, Content-Type: application/json
     Body: { state, project, tool, model, memory, character }
     """
     try:
-        api_url = f"{url.rstrip('/')}/status"
+        api_url = f"{url.rstrip('/')}/api/status"
         # VibeMon API doesn't need terminalId
         api_payload = json.dumps(
             {

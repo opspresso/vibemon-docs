@@ -483,6 +483,8 @@ echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/ttyACM0</
                         <tr><td><code>tool</code></td><td>string</td><td>Tool name (Bash, Read, Edit, etc.) (optional)</td></tr>
                         <tr><td><code>model</code></td><td>string</td><td>Model name (opus, sonnet, etc.) (optional)</td></tr>
                         <tr><td><code>memory</code></td><td>number</td><td>Context window usage 0-100 (optional)</td></tr>
+                        <tr><td><code>usage5h</code></td><td>number</td><td>5-hour reset plan usage 0-100 (optional)</td></tr>
+                        <tr><td><code>usageWeek</code></td><td>number</td><td>Weekly (all models) reset plan usage 0-100 (optional)</td></tr>
                     </tbody>
                 </table>
                 <pre><code># Delete agent status

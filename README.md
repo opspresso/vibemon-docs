@@ -78,11 +78,14 @@ Then merge [`codex/hooks.json`](./docs/codex/hooks.json) into your existing `~/.
 
 ### OpenClaw Configuration
 
-OpenClaw uses a plugin configuration at `~/.openclaw/openclaw.json`:
+OpenClaw uses a plugin configuration at `~/.openclaw/openclaw.json`. OpenClaw doesn't auto-discover extension directories, so the plugin path must also be registered under `plugins.load.paths` or the manifest/entries config alone won't load it:
 
 ```json
 {
   "plugins": {
+    "load": {
+      "paths": ["~/.openclaw/extensions/vibemon-bridge"]
+    },
     "entries": {
       "vibemon-bridge": {
         "enabled": true,

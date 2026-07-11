@@ -243,6 +243,12 @@ Merge the following hooks into your existing `~/.kiro/agents/default.json`:
 }
 ```
 
+Activate the default agent so the merged hooks take effect:
+```bash
+kiro-cli --agent default
+# or inside a running session: /agent swap default
+```
+
 ### For OpenClaw (Manual)
 
 Download plugin files:
@@ -254,11 +260,14 @@ curl -o ~/.openclaw/extensions/vibemon-bridge/index.mjs https://docs.vibemon.io/
 
 **IMPORTANT: Do NOT overwrite `~/.openclaw/openclaw.json`!**
 
-Merge the following into your existing `~/.openclaw/openclaw.json`:
+Merge the following into your existing `~/.openclaw/openclaw.json`. OpenClaw doesn't auto-discover extension directories, so the plugin path must also be registered under `plugins.load.paths` or the manifest/entries config alone won't load it:
 
 ```json
 {
   "plugins": {
+    "load": {
+      "paths": ["~/.openclaw/extensions/vibemon-bridge"]
+    },
     "entries": {
       "vibemon-bridge": {
         "enabled": true,

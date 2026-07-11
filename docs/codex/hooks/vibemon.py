@@ -467,7 +467,7 @@ def send_http_get(url: str, endpoint: str) -> tuple[bool, str | None]:
 def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
     """Send status to VibeMon API with Bearer token authentication.
 
-    API: POST /status
+    API: POST /api/status
     Headers: Authorization: Bearer <token>, Content-Type: application/json
     Body: { state, project, tool, model, memory, character }
     """
