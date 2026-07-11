@@ -1,5 +1,5 @@
 {
-  "auto_launch": false,
+  "auto_launch": true,
   "cache_path": "~/.vibemon/cache/projects.json",
   "debug": false,
   "http_urls": [
