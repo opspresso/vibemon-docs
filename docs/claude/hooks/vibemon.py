@@ -294,14 +294,27 @@ def get_project_metadata(project: str) -> dict[str, Any]:
     return entry
 
 
+def _resets_in_minutes(entry: dict[str, Any]) -> int | None:
+    """Minutes remaining until a usage bucket's `resets_at` (epoch seconds),
+    or None if that bucket has no resets_at (e.g. populated by the older
+    `claude -p "/usage"` subprocess fallback, which only has a display string).
+    """
+    resets_at = entry.get("resets_at")
+    if not isinstance(resets_at, (int, float)):
+        return None
+    return max(0, round((resets_at - time.time()) / 60))
+
+
 def get_usage_metadata() -> dict[str, Any]:
     """Get plan-usage percentages from statusline's usage cache.
 
     statusline.py caches plan usage (from the statusline payload's official
     `rate_limits` field, or a `claude -p "/usage"` subprocess as fallback) next
     to the project cache (~/.vibemon/cache/usage.json). Returns {usage5h,
-    usageWeek} for the 5-hour session window and the weekly (all-models)
-    window. Keys are omitted when the cache is missing or a value is
+    usageWeek, usage5hResetsIn, usageWeekResetsIn} for the 5-hour session
+    window and the weekly (all-models) window — the ResetsIn fields (minutes
+    until reset) are included only when the cache has a `resets_at` epoch for
+    that bucket. Keys are omitted when the cache is missing or a value is
     unavailable, so the API can remove stale values instead of overwriting
     them with 0.
     """
@@ -324,9 +337,15 @@ def get_usage_metadata() -> dict[str, Any]:
     session = data.get("session")
     if isinstance(session, dict) and isinstance(session.get("pct"), int):
         result["usage5h"] = session["pct"]
+        resets_in = _resets_in_minutes(session)
+        if resets_in is not None:
+            result["usage5hResetsIn"] = resets_in
     week = data.get("week_all")
     if isinstance(week, dict) and isinstance(week.get("pct"), int):
         result["usageWeek"] = week["pct"]
+        resets_in = _resets_in_minutes(week)
+        if resets_in is not None:
+            result["usageWeekResetsIn"] = resets_in
     return result
 
 
