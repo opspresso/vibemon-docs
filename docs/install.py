@@ -18,6 +18,7 @@ import difflib
 import json
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from urllib.request import urlopen
@@ -720,6 +721,37 @@ def ensure_plugin_path_registered(config: dict, plugin_dir: str) -> bool:
     return True
 
 
+def refresh_openclaw_plugin_registry() -> None:
+    """Rebuild OpenClaw's persisted plugin registry.
+
+    The OpenClaw gateway boots from a persisted registry snapshot; installing
+    or updating a plugin does not refresh it, so without this step the gateway
+    keeps running the stale snapshot and never registers the plugin's hooks —
+    even though the plugin shows as "loaded".
+    """
+    manual_hint = "    Run manually: openclaw plugins registry --refresh"
+    if shutil.which("openclaw") is None:
+        print(f"  {colored('!', 'yellow')} openclaw CLI not found in PATH")
+        print(manual_hint)
+        return
+    try:
+        result = subprocess.run(
+            ["openclaw", "plugins", "registry", "--refresh"],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"  {colored('✗', 'red')} plugin registry refresh failed: {e}")
+        print(manual_hint)
+        return
+    if result.returncode == 0:
+        print(f"  {colored('✓', 'green')} plugin registry refreshed")
+    else:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        print(f"  {colored('✗', 'red')} plugin registry refresh failed (exit {result.returncode})"
+              + (f": {detail[-1]}" if detail else ""))
+        print(manual_hint)
+
+
 def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon plugin for OpenClaw."""
     openclaw_home = Path.home() / ".openclaw"
@@ -754,7 +786,13 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     # Transmission settings live in ~/.vibemon/config.json (shared with the
     # other tools and auto-managed by the Desktop app); the plugin reads them
     # as fallback. Only registration + enablement is written here.
-    vibemon_plugin_config = {"enabled": True}
+    # hooks.allowConversationAccess is required by OpenClaw for non-bundled
+    # plugins to register conversation hooks (agent_end); without it OpenClaw
+    # silently blocks them with only a warn-level diagnostic.
+    vibemon_plugin_config = {
+        "enabled": True,
+        "hooks": {"allowConversationAccess": True},
+    }
 
     # Values older installers wrote into the plugin entry. They shadow the
     # shared-config fallback, so remove them when still at those defaults
@@ -794,6 +832,10 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
                     print(f"  {colored('✓', 'green')} moved to ~/.vibemon/config.json: {', '.join(removed)}")
                 if not plugin_cfg:
                     del existing_plugin["config"]
+            hooks_cfg = existing_plugin.setdefault("hooks", {})
+            if isinstance(hooks_cfg, dict) and hooks_cfg.get("allowConversationAccess") is not True:
+                hooks_cfg["allowConversationAccess"] = True
+                print(f"  {colored('✓', 'green')} hooks.allowConversationAccess enabled")
             print(f"  {colored('✓', 'green')} vibemon-bridge plugin already configured")
         else:
             existing_config["plugins"]["entries"]["vibemon-bridge"] = vibemon_plugin_config
@@ -812,6 +854,11 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
         ensure_plugin_path_registered(new_config, str(plugin_dir))
         config_file.write_text(json.dumps(new_config, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} openclaw.json created")
+
+    # Without a registry refresh the gateway keeps booting from a stale
+    # plugin-registry snapshot and the plugin's hooks never run.
+    print("\nRefreshing OpenClaw plugin registry:")
+    refresh_openclaw_plugin_registry()
 
     print(f"\n{colored('OpenClaw installation complete!', 'green')}")
     print(f"\n{colored('Next steps:', 'yellow')}")

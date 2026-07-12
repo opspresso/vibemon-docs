@@ -5,7 +5,8 @@
     },
     "entries": {
       "vibemon-bridge": {
-        "enabled": true
+        "enabled": true,
+        "hooks": { "allowConversationAccess": true }
       }
     }
   }

@@ -274,14 +274,24 @@ Merge the following into your existing `~/.openclaw/openclaw.json`. OpenClaw doe
     },
     "entries": {
       "vibemon-bridge": {
-        "enabled": true
+        "enabled": true,
+        "hooks": { "allowConversationAccess": true }
       }
     }
   }
 }
 ```
 
+`hooks.allowConversationAccess` is required for OpenClaw to let a non-bundled plugin register conversation hooks (`agent_end`); without it OpenClaw silently blocks them.
+
 Transmission settings (`http_urls`, `serial_port`, `vibemon_url`, `vibemon_token`) are read from the shared `~/.vibemon/config.json` (Step 1). To override them for OpenClaw only, add a `config` object to the entry with `httpEnabled`, `httpUrls`, `serialEnabled`, `vibemonUrl`, or `vibemonToken` — plugin config always wins over the shared file.
+
+Finally, rebuild OpenClaw's persisted plugin registry and restart the gateway — the gateway boots from a registry snapshot, and skipping the refresh leaves the plugin loaded but with no hooks running:
+
+```bash
+openclaw plugins registry --refresh
+openclaw gateway restart
+```
 
 ## Token Information
 
