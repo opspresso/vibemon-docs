@@ -662,12 +662,9 @@ def build_progress_bar(percent_str: str | int | float, width: int = 10) -> str:
     percent_value = max(0.0, min(100.0, percent_value))
     percent = int(percent_value)
 
-    if percent_value <= 0:
-        filled = 0
-    elif percent_value >= 100:
-        filled = width
-    else:
-        filled = max(1, min(width - 1, round(percent_value * width / 100)))
+    # Filled segment count follows the percentage proportionally, so the bar
+    # visually reflects its actual ratio (no artificial floor/ceiling).
+    filled = round(percent_value * width / 100)
     empty = width - filled
 
     # Build the bar - filled segments use one color by total ratio, empty in dim
