@@ -28,29 +28,34 @@ except ImportError:  # Windows
 
 
 def load_config() -> None:
-    """Load configuration from config.json and set as environment variables."""
-    config_file = Path.home() / ".vibemon" / "config.json"
-    if not config_file.exists():
-        return
+    """Load vibemon config (cache_path only, shared with hooks/vibemon.py)
+    and statusline display config, and set both as environment variables.
 
-    try:
-        with open(config_file) as f:
-            config = json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return
+    statusline.json values win over any same-named legacy keys still
+    present in config.json, for backward compatibility with installs that
+    haven't re-run the installer since the config split.
+    """
+    vibemon_home = Path.home() / ".vibemon"
 
-    # Map config keys to environment variables
+    def _load(path: Path) -> dict[str, Any]:
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, IOError):
+            return {}
+
+    config = _load(vibemon_home / "config.json")
+    statusline_config = _load(vibemon_home / "statusline.json")
+
+    # cache_path is a shared vibemon setting: statusline.py must agree with
+    # hooks/vibemon.py on where the cache lives, even though it doesn't use
+    # any of config.json's other (monitor-target) keys.
+    cache_path = config.get("cache_path")
+    if cache_path:
+        os.environ.setdefault("VIBEMON_CACHE_PATH", str(cache_path))
+
+    # Map statusline-only config keys to environment variables
     key_mapping = {
-        "debug": ("DEBUG", lambda v: "1" if v else "0"),
-        "cache_path": ("VIBEMON_CACHE_PATH", str),
-        "auto_launch": ("VIBEMON_AUTO_LAUNCH", lambda v: "1" if v else "0"),
-        "http_urls": (
-            "VIBEMON_HTTP_URLS",
-            lambda v: ",".join(v) if isinstance(v, list) else str(v),
-        ),
-        "serial_port": ("VIBEMON_SERIAL_PORT", str),
-        "vibemon_url": ("VIBEMON_URL", str),
-        "vibemon_token": ("VIBEMON_TOKEN", str),
         "token_reset_hours": ("VIBEMON_TOKEN_RESET_HOURS", str),
         "usage_enabled": ("VIBEMON_USAGE_ENABLED", lambda v: "1" if v else "0"),
         "usage_refresh_seconds": ("VIBEMON_USAGE_REFRESH", str),
@@ -67,10 +72,10 @@ def load_config() -> None:
         "show_version": ("VIBEMON_SHOW_VERSION", lambda v: "1" if v else "0"),
         "show_statusline": ("VIBEMON_SHOW_STATUSLINE", lambda v: "1" if v else "0"),
     }
-
+    merged = {**config, **statusline_config}  # statusline.json wins on overlap
     for config_key, (env_key, converter) in key_mapping.items():
-        if config_key in config and config[config_key] is not None:
-            value = converter(config[config_key])
+        if config_key in merged and merged[config_key] is not None:
+            value = converter(merged[config_key])
             if value:
                 os.environ.setdefault(env_key, value)
 
