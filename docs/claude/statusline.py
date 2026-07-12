@@ -809,10 +809,12 @@ def apply_session_floor(usage: dict[str, Any]) -> dict[str, Any]:
 def save_usage_cache(usage: dict[str, Any]) -> None:
     """Atomically write the usage cache (stamps a fresh `ts`).
 
-    Uses the same fcntl-guarded lockfile pattern as save_to_cache, since both
-    the direct rate_limits path (statusline main()) and the `claude -p
-    "/usage"` subprocess refresh (refresh_usage) write this file and would
-    otherwise race each other.
+    Takes a single non-blocking lock attempt (unlike save_to_cache's
+    retry-with-timeout loop) because this is called synchronously from
+    statusline main() on the direct rate_limits path — every render, not in
+    a backgrounded child. Retrying for up to LOCK_TIMEOUT_SECONDS here would
+    stall the status line itself under concurrent-session contention; losing
+    an occasional write is harmless since the next render just writes again.
     """
     cache_path = get_usage_cache_path()
     lock_fd = None
@@ -822,15 +824,10 @@ def save_usage_cache(usage: dict[str, Any]) -> None:
         if fcntl is not None:
             lockfile = f"{cache_path}.lock"
             lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
-            start_time = time.monotonic()
-            while True:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except (IOError, OSError):
-                    if time.monotonic() - start_time > LOCK_TIMEOUT_SECONDS:
-                        return
-                    time.sleep(LOCK_RETRY_INTERVAL)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (IOError, OSError):
+                return  # Another writer holds it; skip, next render retries
 
         payload = dict(usage)
         payload["ts"] = int(time.time())

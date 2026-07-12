@@ -391,13 +391,19 @@ def send_serial_raw(port: str, data: str) -> bool:
             )
 
             # Write data. Open non-blocking so a device that never asserts
-            # DCD/carrier can't hang this call indefinitely.
+            # DCD/carrier can't hang this call indefinitely. os.write() may
+            # return a short count, so loop until every byte is sent; a
+            # BlockingIOError mid-loop propagates to the except below rather
+            # than silently sending a truncated payload.
             open_flags = os.O_WRONLY
             if hasattr(os, "O_NONBLOCK"):
                 open_flags |= os.O_NONBLOCK
             port_fd = os.open(port, open_flags)
             try:
-                os.write(port_fd, (data + "\n").encode())
+                payload_bytes = (data + "\n").encode()
+                written = 0
+                while written < len(payload_bytes):
+                    written += os.write(port_fd, payload_bytes[written:])
             finally:
                 os.close(port_fd)
 

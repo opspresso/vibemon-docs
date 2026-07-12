@@ -159,8 +159,13 @@ def configure_token(config: dict, cli_token: str = None) -> dict:
     return config
 
 
-def load_or_create_config(config_path: Path, example_content: str) -> dict:
-    """Load existing config or create from example."""
+def load_or_create_config(config_path: Path, example_content: str, fallback: dict = None) -> dict:
+    """Load existing config or create from example.
+
+    `fallback` is used if `example_content` itself fails to parse (e.g. a
+    corrupted download); defaults to the vibemon config.json shape for
+    backward compatibility with existing callers.
+    """
     if config_path.exists():
         try:
             with open(config_path) as f:
@@ -172,6 +177,8 @@ def load_or_create_config(config_path: Path, example_content: str) -> dict:
     try:
         return json.loads(example_content)
     except json.JSONDecodeError:
+        if fallback is not None:
+            return fallback
         return {
             "debug": False,
             "cache_path": "~/.vibemon/cache/projects.json",
@@ -442,7 +449,10 @@ def configure_statusline_config(source: FileSource) -> None:
 
     print("\nConfiguring statusline display settings:")
     statusline_content = source.get_file(STATUSLINE_EXAMPLE_FILE)
-    statusline_config = load_or_create_config(statusline_path, statusline_content)
+    # fallback={}: statusline.json has no config.json-shaped default worth
+    # falling back to; an empty dict just leaves every show_*/usage_* toggle
+    # at statusline.py's own coded-in defaults, which is the safest state.
+    statusline_config = load_or_create_config(statusline_path, statusline_content, fallback={})
 
     if is_new:
         print("  Creating new config at ~/.vibemon/statusline.json")
