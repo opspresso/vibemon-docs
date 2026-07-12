@@ -2,7 +2,7 @@
   "id": "vibemon-bridge",
   "name": "VibeMon Bridge",
   "description": "Real-time status bridge for VibeMon (ESP32/Desktop)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -19,19 +19,16 @@
       },
       "serialEnabled": {
         "type": "boolean",
-        "default": false,
-        "description": "Enable serial output to ESP32"
+        "description": "Enable serial output to ESP32 (unset: on when serial_port is set in ~/.vibemon/config.json)"
       },
       "httpEnabled": {
         "type": "boolean",
-        "default": false,
-        "description": "Enable HTTP output to VibeMon Desktop"
+        "description": "Enable HTTP output to VibeMon Desktop (unset: on when http_urls in ~/.vibemon/config.json is non-empty)"
       },
       "httpUrls": {
         "type": "array",
         "items": { "type": "string" },
-        "default": ["http://127.0.0.1:19280"],
-        "description": "VibeMon HTTP URLs (multiple targets supported)"
+        "description": "VibeMon HTTP URLs (unset: http_urls from ~/.vibemon/config.json)"
       },
       "autoLaunch": {
         "type": "boolean",
@@ -40,13 +37,11 @@
       },
       "vibemonUrl": {
         "type": ["string", "null"],
-        "default": "",
-        "description": "VibeMon API URL (e.g., https://vibemon.io)"
+        "description": "VibeMon API URL (unset: vibemon_url from ~/.vibemon/config.json)"
       },
       "vibemonToken": {
         "type": ["string", "null"],
-        "default": "",
-        "description": "VibeMon API access token"
+        "description": "VibeMon API access token (unset: vibemon_token from ~/.vibemon/config.json)"
       },
       "debug": {
         "type": "boolean",
@@ -66,15 +61,15 @@
     },
     "serialEnabled": {
       "label": "Serial Output",
-      "help": "Send status to ESP32 via USB serial"
+      "help": "Send status to ESP32 via USB serial (leave unset to follow ~/.vibemon/config.json)"
     },
     "httpEnabled": {
       "label": "HTTP Output",
-      "help": "Send status to VibeMon Desktop app"
+      "help": "Send status to VibeMon Desktop app (leave unset to follow ~/.vibemon/config.json)"
     },
     "httpUrls": {
       "label": "HTTP URLs",
-      "help": "List of VibeMon HTTP URLs (e.g., http://127.0.0.1:19280)",
+      "help": "List of VibeMon HTTP URLs (leave unset to follow ~/.vibemon/config.json)",
       "advanced": true
     },
     "autoLaunch": {
@@ -83,12 +78,12 @@
     },
     "vibemonUrl": {
       "label": "VibeMon API URL",
-      "help": "URL for VibeMon cloud service (e.g., https://vibemon.io)",
+      "help": "URL for VibeMon cloud service (leave unset to follow ~/.vibemon/config.json)",
       "advanced": true
     },
     "vibemonToken": {
       "label": "VibeMon API Token",
-      "help": "Your token (8-64 chars, a-z, 0-9, _, -)",
+      "help": "Your token (leave unset to follow ~/.vibemon/config.json)",
       "advanced": true
     },
     "debug": {

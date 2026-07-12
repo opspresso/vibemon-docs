@@ -63,9 +63,9 @@ curl -fsSL https://docs.vibemon.io/install.py | python3
 
 If automatic installation doesn't work, follow the steps below for your platform.
 
-### Step 1: Create Configuration (Claude Code, Codex & Kiro only)
+### Step 1: Create Configuration (all tools)
 
-Create `~/.vibemon/config.json` (not needed for OpenClaw):
+Create `~/.vibemon/config.json` (shared by Claude Code, Codex, Kiro, and the OpenClaw plugin):
 
 ```json
 {
@@ -274,16 +274,14 @@ Merge the following into your existing `~/.openclaw/openclaw.json`. OpenClaw doe
     },
     "entries": {
       "vibemon-bridge": {
-        "enabled": true,
-        "config": {
-          "vibemonUrl": "https://vibemon.io",
-          "vibemonToken": "YOUR_TOKEN_HERE"
-        }
+        "enabled": true
       }
     }
   }
 }
 ```
+
+Transmission settings (`http_urls`, `serial_port`, `vibemon_url`, `vibemon_token`) are read from the shared `~/.vibemon/config.json` (Step 1). To override them for OpenClaw only, add a `config` object to the entry with `httpEnabled`, `httpUrls`, `serialEnabled`, `vibemonUrl`, or `vibemonToken` — plugin config always wins over the shared file.
 
 ## Token Information
 

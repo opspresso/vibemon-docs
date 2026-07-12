@@ -1,19 +1,11 @@
 {
   "plugins": {
+    "load": {
+      "paths": ["~/.openclaw/extensions/vibemon-bridge"]
+    },
     "entries": {
       "vibemon-bridge": {
-        "enabled": true,
-        "config": {
-          "autoLaunch": false,
-          "character": "claw",
-          "debug": false,
-          "httpEnabled": false,
-          "httpUrls": ["http://127.0.0.1:19280"],
-          "projectName": "OpenClaw",
-          "serialEnabled": false,
-          "vibemonToken": "",
-          "vibemonUrl": "https://vibemon.io"
-        }
+        "enabled": true
       }
     }
   }

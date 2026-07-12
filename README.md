@@ -99,7 +99,7 @@ Then merge [`codex/hooks.json`](./docs/codex/hooks.json) into your existing `~/.
 
 ### OpenClaw Configuration
 
-OpenClaw uses a plugin configuration at `~/.openclaw/openclaw.json`. OpenClaw doesn't auto-discover extension directories, so the plugin path must also be registered under `plugins.load.paths` or the manifest/entries config alone won't load it:
+The OpenClaw plugin reads transmission settings (`http_urls`, `serial_port`, `vibemon_url`, `vibemon_token`) from the same `~/.vibemon/config.json` as the other tools. It only needs to be registered and enabled in `~/.openclaw/openclaw.json` — OpenClaw doesn't auto-discover extension directories, so the plugin path must also be registered under `plugins.load.paths` or the manifest/entries config alone won't load it:
 
 ```json
 {
@@ -109,23 +109,14 @@ OpenClaw uses a plugin configuration at `~/.openclaw/openclaw.json`. OpenClaw do
     },
     "entries": {
       "vibemon-bridge": {
-        "enabled": true,
-        "config": {
-          "projectName": "OpenClaw",
-          "character": "claw",
-          "autoLaunch": false,
-          "serialEnabled": false,
-          "httpEnabled": false,
-          "httpUrls": ["http://127.0.0.1:19280"],
-          "vibemonUrl": "https://vibemon.io",
-          "vibemonToken": "",
-          "debug": false
-        }
+        "enabled": true
       }
     }
   }
 }
 ```
+
+To override the shared settings for OpenClaw only, add a `config` object to the entry (`projectName`, `character`, `httpEnabled`, `httpUrls`, `serialEnabled`, `vibemonUrl`, `vibemonToken`, `autoLaunch`, `debug`) — plugin config always wins over `~/.vibemon/config.json`.
 
 ## CLI Commands
 

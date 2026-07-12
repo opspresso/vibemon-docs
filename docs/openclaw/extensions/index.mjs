@@ -32,8 +32,8 @@ let lastSendTime = 0;
 let cachedModel = null;
 let lastMemoryPercent = null;
 
-// Configuration (set in register)
-let config = {
+// Built-in defaults (lowest precedence)
+const DEFAULT_CONFIG = {
   projectName: "OpenClaw",
   character: CHARACTER,
   serialEnabled: false,
@@ -44,6 +44,21 @@ let config = {
   vibemonUrl: null,
   vibemonToken: null,
 };
+
+// Effective configuration (resolved in register, refreshed on send)
+let config = { ...DEFAULT_CONFIG };
+
+// Plugin config from openclaw.json (highest precedence, set in register)
+let pluginConfig = {};
+
+// Shared VibeMon config (~/.vibemon/config.json) — also read by the
+// Claude/Codex/Kiro hooks, and kept pointed at the Desktop app by the app
+// itself. Transmission settings (http_urls, serial_port, vibemon_url,
+// vibemon_token) fall back to it so OpenClaw gets the same auto-managed
+// targets; explicit plugin config in openclaw.json always wins.
+const SHARED_CONFIG_PATH = path.join(os.homedir(), ".vibemon", "config.json");
+let sharedConfig = {};
+let sharedConfigMtime = null;
 
 let logger = null;
 
@@ -59,6 +74,107 @@ const MIN_SEND_INTERVAL_MS = 100;
 function debug(message) {
   if (config.debug && logger) {
     logger.info?.(`[vibemon] ${message}`);
+  }
+}
+
+/**
+ * (Re)load ~/.vibemon/config.json if it changed on disk (mtime check).
+ * Returns true when sharedConfig was updated.
+ */
+function loadSharedConfig() {
+  let stat = null;
+  try {
+    stat = fs.statSync(SHARED_CONFIG_PATH);
+  } catch {
+    // File missing
+  }
+
+  if (!stat) {
+    if (sharedConfigMtime === null) return false;
+    sharedConfigMtime = null;
+    sharedConfig = {};
+    return true;
+  }
+
+  if (stat.mtimeMs === sharedConfigMtime) return false;
+  sharedConfigMtime = stat.mtimeMs;
+
+  try {
+    const json = JSON.parse(fs.readFileSync(SHARED_CONFIG_PATH, "utf-8"));
+    sharedConfig = json && typeof json === "object" ? json : {};
+  } catch (err) {
+    debug(`Failed to read shared config: ${err.message}`);
+    sharedConfig = {};
+  }
+  return true;
+}
+
+/**
+ * First value that is not undefined/null/"" (empty string means "not set"
+ * in both openclaw.json and ~/.vibemon/config.json), or null.
+ */
+function firstNonEmpty(...values) {
+  for (const v of values) {
+    if (v !== undefined && v !== null && v !== "") return v;
+  }
+  return null;
+}
+
+/**
+ * Resolve the effective config: pluginConfig (openclaw.json) > env >
+ * sharedConfig (~/.vibemon/config.json) > built-in defaults.
+ *
+ * A non-empty shared http_urls implies HTTP output on, and a shared
+ * serial_port implies serial output on — matching how the vibemon.py hooks
+ * interpret the same file. An explicit boolean in pluginConfig overrides.
+ */
+function resolveConfig() {
+  const sharedHttpUrls = Array.isArray(sharedConfig.http_urls)
+    ? sharedConfig.http_urls.filter((u) => typeof u === "string" && u)
+    : [];
+  const pluginHttpUrls = Array.isArray(pluginConfig.httpUrls)
+    ? pluginConfig.httpUrls.filter((u) => typeof u === "string" && u)
+    : [];
+
+  return {
+    projectName: pluginConfig.projectName ?? DEFAULT_CONFIG.projectName,
+    character: pluginConfig.character ?? DEFAULT_CONFIG.character,
+    serialEnabled: typeof pluginConfig.serialEnabled === "boolean"
+      ? pluginConfig.serialEnabled
+      : Boolean(sharedConfig.serial_port),
+    httpEnabled: typeof pluginConfig.httpEnabled === "boolean"
+      ? pluginConfig.httpEnabled
+      : sharedHttpUrls.length > 0,
+    httpUrls: pluginHttpUrls.length > 0
+      ? pluginHttpUrls
+      : sharedHttpUrls.length > 0
+        ? sharedHttpUrls
+        : DEFAULT_CONFIG.httpUrls,
+    autoLaunch: pluginConfig.autoLaunch ?? DEFAULT_CONFIG.autoLaunch,
+    debug: pluginConfig.debug ?? DEFAULT_CONFIG.debug,
+    vibemonUrl: firstNonEmpty(
+      pluginConfig.vibemonUrl,
+      process.env.VIBEMON_URL,
+      sharedConfig.vibemon_url,
+      DEFAULT_CONFIG.vibemonUrl,
+    ),
+    vibemonToken: firstNonEmpty(
+      pluginConfig.vibemonToken,
+      process.env.VIBEMON_TOKEN,
+      sharedConfig.vibemon_token,
+      DEFAULT_CONFIG.vibemonToken,
+    ),
+  };
+}
+
+/**
+ * Re-resolve config if ~/.vibemon/config.json changed (e.g. the Desktop app
+ * updated http_urls after the gateway started).
+ */
+function refreshConfig() {
+  if (loadSharedConfig()) {
+    config = resolveConfig();
+    debug(`Shared config reloaded (HTTP: ${config.httpEnabled}, ${config.httpUrls.length} URLs)`);
   }
 }
 
@@ -408,6 +524,8 @@ function buildPayload(state, extra = {}) {
  * Send status (debounced) - sends to all configured targets
  */
 function sendStatus(state, extra = {}) {
+  refreshConfig();
+
   const now = Date.now();
   if (now - lastSendTime < MIN_SEND_INTERVAL_MS && state === currentState) {
     return;
@@ -475,26 +593,15 @@ const plugin = {
   id: "vibemon-bridge",
   name: "VibeMon Bridge",
   description: "Real-time status bridge for VibeMon (ESP32/Desktop)",
-  version: "1.0.0",
+  version: "1.1.0",
 
   register(api) {
     logger = api.logger;
 
-    // Merge plugin config
-    const pluginConfig = api.pluginConfig || {};
-
-    config = {
-      ...config,
-      projectName: pluginConfig.projectName ?? config.projectName,
-      character: pluginConfig.character ?? config.character,
-      serialEnabled: pluginConfig.serialEnabled ?? config.serialEnabled,
-      httpEnabled: pluginConfig.httpEnabled ?? config.httpEnabled,
-      httpUrls: pluginConfig.httpUrls ?? config.httpUrls,
-      autoLaunch: pluginConfig.autoLaunch ?? config.autoLaunch,
-      debug: pluginConfig.debug ?? config.debug,
-      vibemonUrl: pluginConfig.vibemonUrl ?? process.env.VIBEMON_URL ?? config.vibemonUrl,
-      vibemonToken: pluginConfig.vibemonToken ?? process.env.VIBEMON_TOKEN ?? config.vibemonToken,
-    };
+    // Resolve config: openclaw.json plugin config > env > shared config
+    pluginConfig = api.pluginConfig || {};
+    loadSharedConfig();
+    config = resolveConfig();
 
     api.logger.info(`[vibemon] Plugin loaded`);
     api.logger.info(`[vibemon] Project: ${config.projectName}, Character: ${config.character}`);

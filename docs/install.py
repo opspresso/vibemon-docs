@@ -729,15 +729,10 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
 
     print(f"\n{colored('Installing VibeMon Plugin for OpenClaw...', 'cyan')}\n")
 
-    # Reuse the shared VibeMon token when --token wasn't passed explicitly
-    token = cli_token
-    if not token:
-        vibemon_config_path = Path.home() / ".vibemon" / "config.json"
-        if vibemon_config_path.exists():
-            try:
-                token = json.loads(vibemon_config_path.read_text()).get("vibemon_token") or None
-            except json.JSONDecodeError:
-                pass
+    # The plugin reads transmission settings (http_urls, serial_port,
+    # vibemon_url, vibemon_token) from ~/.vibemon/config.json as fallback,
+    # so make sure it exists and holds the token.
+    token = configure_vibemon_config(source, cli_token)
 
     plugin_dir = openclaw_home / "extensions" / "vibemon-bridge"
     plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -756,17 +751,20 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     print("\nConfiguring openclaw.json:")
     config_file = openclaw_home / "openclaw.json"
 
-    vibemon_plugin_config = {
-        "enabled": True,
-        "config": {
-            "serialEnabled": False,
-            "httpEnabled": False,
-            "httpUrls": ["http://127.0.0.1:19280"],
-            "autoLaunch": False,
-            "vibemonUrl": "https://vibemon.io",
-            "vibemonToken": token or "",
-            "debug": False
-        }
+    # Transmission settings live in ~/.vibemon/config.json (shared with the
+    # other tools and auto-managed by the Desktop app); the plugin reads them
+    # as fallback. Only registration + enablement is written here.
+    vibemon_plugin_config = {"enabled": True}
+
+    # Values older installers wrote into the plugin entry. They shadow the
+    # shared-config fallback, so remove them when still at those defaults
+    # (a user-customized value never matches and is preserved).
+    stale_transmission_defaults = {
+        "serialEnabled": (False,),
+        "httpEnabled": (False,),
+        "httpUrls": (["http://127.0.0.1:19280"],),
+        "vibemonUrl": ("https://vibemon.io", ""),
+        "vibemonToken": ("", token),
     }
 
     if config_file.exists():
@@ -784,12 +782,19 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
         # Merge vibemon-bridge plugin (preserve existing config if present)
         if "vibemon-bridge" in existing_config["plugins"]["entries"]:
             existing_plugin = existing_config["plugins"]["entries"]["vibemon-bridge"]
-            # Update token if provided via CLI or found in the shared VibeMon config
-            if token and "config" in existing_plugin:
-                existing_plugin["config"]["vibemonToken"] = token
+            plugin_cfg = existing_plugin.get("config")
+            if isinstance(plugin_cfg, dict):
+                removed = [
+                    key for key, defaults in stale_transmission_defaults.items()
+                    if key in plugin_cfg and plugin_cfg[key] in defaults
+                ]
+                for key in removed:
+                    del plugin_cfg[key]
+                if removed:
+                    print(f"  {colored('✓', 'green')} moved to ~/.vibemon/config.json: {', '.join(removed)}")
+                if not plugin_cfg:
+                    del existing_plugin["config"]
             print(f"  {colored('✓', 'green')} vibemon-bridge plugin already configured")
-            if token:
-                print(f"  {colored('✓', 'green')} token updated")
         else:
             existing_config["plugins"]["entries"]["vibemon-bridge"] = vibemon_plugin_config
             print(f"  {colored('✓', 'green')} vibemon-bridge plugin added")
@@ -812,11 +817,14 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     print(f"\n{colored('Next steps:', 'yellow')}")
     print("  1. Restart OpenClaw Gateway: openclaw gateway restart")
     print("  2. Check logs for: [vibemon] Plugin loaded")
-    print(f"\n{colored('Config options (in ~/.openclaw/openclaw.json):', 'yellow')}")
-    print("  • serialEnabled: true to send status to ESP32 via USB")
-    print("  • httpEnabled:   true to send status to Desktop App (localhost)")
-    print("  • vibemonUrl:    VibeMon cloud service URL (https://vibemon.io)")
-    print("  • vibemonToken:  Your token (8-64 chars, a-z, 0-9, _, -)")
+    print(f"\n{colored('Config (shared, in ~/.vibemon/config.json):', 'yellow')}")
+    print("  • http_urls:     Desktop App URLs (auto-managed by the Desktop app)")
+    print("  • serial_port:   set to send status to ESP32 via USB")
+    print("  • vibemon_url:   VibeMon cloud service URL (https://vibemon.io)")
+    print("  • vibemon_token: Your token (8-64 chars, a-z, 0-9, _, -)")
+    print(f"\n{colored('Overrides (optional, in ~/.openclaw/openclaw.json plugin config):', 'yellow')}")
+    print("  • projectName, character, httpEnabled, httpUrls, serialEnabled,")
+    print("    vibemonUrl, vibemonToken, autoLaunch, debug")
 
     return True
 

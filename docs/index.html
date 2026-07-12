@@ -358,27 +358,20 @@ codex_hooks = true</code></pre>
                 <p>Then merge <a href="./codex/hooks.json">codex/hooks.json</a> into your existing <code>~/.codex/hooks.json</code> (do not overwrite). Codex hooks are experimental and Windows support is currently disabled.</p>
 
                 <h3>OpenClaw Configuration</h3>
-                <p>OpenClaw uses a plugin configuration at <code>~/.openclaw/openclaw.json</code>:</p>
+                <p>The OpenClaw plugin reads transmission settings (<code>http_urls</code>, <code>serial_port</code>, <code>vibemon_url</code>, <code>vibemon_token</code>) from the same <code>~/.vibemon/config.json</code> as the other tools. It only needs to be registered and enabled in <code>~/.openclaw/openclaw.json</code>:</p>
                 <pre><code>{
   "plugins": {
+    "load": {
+      "paths": ["~/.openclaw/extensions/vibemon-bridge"]
+    },
     "entries": {
       "vibemon-bridge": {
-        "enabled": true,
-        "config": {
-          "projectName": "OpenClaw",
-          "character": "claw",
-          "autoLaunch": false,
-          "serialEnabled": false,
-          "httpEnabled": false,
-          "httpUrls": ["http://127.0.0.1:19280"],
-          "vibemonUrl": "https://vibemon.io",
-          "vibemonToken": "",
-          "debug": false
-        }
+        "enabled": true
       }
     }
   }
 }</code></pre>
+                <p>To override the shared settings for OpenClaw only, add a <code>config</code> object to the entry (<code>projectName</code>, <code>character</code>, <code>httpEnabled</code>, <code>httpUrls</code>, <code>serialEnabled</code>, <code>vibemonUrl</code>, <code>vibemonToken</code>, <code>autoLaunch</code>, <code>debug</code>) — plugin config always wins over <code>~/.vibemon/config.json</code>.</p>
             </section>
 
             <section id="cli">
