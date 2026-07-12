@@ -578,7 +578,8 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
 
     API: POST /api/status
     Headers: Authorization: Bearer <token>, Content-Type: application/json
-    Body: { state, project, tool, model, memory, character }
+    Body: { state, project, tool, model, memory, character,
+            usage5h?, usageWeek?, usage5hResetsIn?, usageWeekResetsIn? }
     """
     try:
         api_url = f"{url.rstrip('/')}/api/status"
@@ -593,7 +594,7 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
         }
         # Plan-usage fields are optional; include only when available so the API
         # REMOVEs stale values instead of overwriting them with 0.
-        for key in ("usage5h", "usageWeek"):
+        for key in ("usage5h", "usageWeek", "usage5hResetsIn", "usageWeekResetsIn"):
             if key in payload:
                 api_body[key] = payload[key]
         api_payload = json.dumps(api_body)
