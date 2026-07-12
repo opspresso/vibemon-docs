@@ -247,12 +247,16 @@
             Go to VibeMon.io
         </a>
 
-        <div class="install-cmd" onclick="navigator.clipboard.writeText('curl -fsSL https://docs.vibemon.io/install.py | python3')">
-            curl -fsSL https://docs.vibemon.io/install.py | python3
+        <div class="install-cmd" onclick="navigator.clipboard.writeText('brew tap opspresso/tap &amp;&amp; brew install opspresso/tap/vibemon')">
+            brew tap opspresso/tap &amp;&amp; brew install opspresso/tap/vibemon
         </div>
 
         <p class="description" style="margin-top: 1rem; margin-bottom: 0; font-size: 0.9rem;">
-            Are you an AI agent? Read <a href="./setup.md">setup.md</a> and follow the instructions to join VibeMon.
+            Then open <strong>Settings &gt; AI Tools</strong> in the app to install hooks for Claude Code, Codex, Kiro, or OpenClaw with one click.
+        </p>
+
+        <p class="description" style="margin-top: 0.5rem; margin-bottom: 0; font-size: 0.85rem;">
+            Are you an AI agent? Read <a href="./setup.md">setup.md</a>, or run <code>curl -fsSL https://docs.vibemon.io/install.py | python3</code> directly.
         </p>
 
         <div class="characters">
@@ -299,12 +303,20 @@
             <section id="install">
                 <h2>Installation</h2>
 
-                <h3>Online Install (Recommended)</h3>
-                <pre><code>curl -fsSL https://docs.vibemon.io/install.py | python3</code></pre>
-                <p>Non-interactive (for AI agents):</p>
+                <h3>VibeMon App (Recommended)</h3>
+                <p>Install the desktop app, then let it configure everything else for you — no separate script needed.</p>
+                <pre><code>brew tap opspresso/tap
+brew install opspresso/tap/vibemon</code></pre>
+                <p>Or via npm: <code>npx vibemon@latest</code></p>
+                <p>Open the app, go to <strong>Settings &gt; AI Tools</strong>, and click <strong>Install</strong> for Claude Code, Codex CLI, Kiro IDE, or OpenClaw.</p>
+
+                <h3>Non-interactive Install (AI agents, CI)</h3>
+                <p>For headless setups where a GUI app isn't available:</p>
                 <pre><code># Choose exactly one platform + your token
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_token
 # --codex / --kiro / --openclaw for other tools, --all for every detected tool</code></pre>
+                <p>Interactive prompt version:</p>
+                <pre><code>curl -fsSL https://docs.vibemon.io/install.py | python3</code></pre>
 
                 <h3>Local Install</h3>
                 <pre><code>git clone https://github.com/opspresso/vibemon-docs.git
@@ -392,15 +404,7 @@ python3 ~/.claude/hooks/vibemon.py --reboot</code></pre>
                 <h2>Apps</h2>
 
                 <h3>Desktop App</h3>
-                <p>Electron app with system tray for macOS, Windows, Linux.</p>
-                <p>Homebrew (macOS, recommended):</p>
-                <pre><code>brew tap opspresso/tap
-brew install opspresso/tap/vibemon</code></pre>
-                <p>Or via npm:</p>
-                <pre><code>npx vibemon@latest
-# or install globally
-npm install -g vibemon
-vibemon</code></pre>
+                <p>Electron app with system tray for macOS, Windows, Linux. See <a href="#install">Installation</a> above to install.</p>
                 <p>Token can be configured via the system tray menu.</p>
                 <table>
                     <thead><tr><th>Window Mode</th><th>Description</th></tr></thead>

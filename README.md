@@ -13,17 +13,38 @@ VibeMon is a real-time status monitoring system for AI coding assistants. It dis
 
 ## Installation
 
-### Online Install (Recommended)
+### VibeMon App (Recommended)
+
+Install the desktop app, then let it configure everything else for you — no separate script needed.
+
+Homebrew (macOS, recommended):
 
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3
+brew tap opspresso/tap
+brew install opspresso/tap/vibemon
 ```
 
-Non-interactive (for AI agents):
+Or via npm:
+
+```bash
+npx vibemon@latest
+```
+
+Open the app, go to **Settings > AI Tools**, and click **Install** for Claude Code, Codex CLI, Kiro IDE, or OpenClaw. This installs the hooks and writes `~/.vibemon/config.json` for you. See [vibemon-app](https://github.com/opspresso/vibemon-app) for details.
+
+### Non-interactive Install (AI agents, CI)
+
+For headless setups where a GUI app isn't available:
 
 ```bash
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_token
 # --codex / --kiro / --openclaw for other tools, --all for every detected tool
+```
+
+Interactive prompt version:
+
+```bash
+curl -fsSL https://docs.vibemon.io/install.py | python3
 ```
 
 Or point your AI agent at [`docs/setup.md`](./docs/setup.md) (`https://docs.vibemon.io/setup.md`) and have it follow the instructions directly.
@@ -131,23 +152,7 @@ python3 ~/.claude/hooks/vibemon.py --reboot
 
 ### Desktop App
 
-Electron app with system tray for macOS, Windows, Linux.
-
-Homebrew (macOS, recommended):
-
-```bash
-brew tap opspresso/tap
-brew install opspresso/tap/vibemon
-```
-
-Or via npm:
-
-```bash
-npx vibemon@latest
-# or install globally
-npm install -g vibemon
-vibemon
-```
+Electron app with system tray for macOS, Windows, Linux. See [Installation](#installation) above to install.
 
 Token can be configured via the system tray menu.
 

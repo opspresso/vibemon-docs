@@ -84,14 +84,29 @@ load_config()
 
 VIBE_MONITOR_MAX_PROJECTS = 10
 
+
+def _env_int(env_key: str, default: int) -> int:
+    """Parse an int-valued config env var, falling back on any bad input.
+
+    Config values pass through str() with no validation (see load_config),
+    so a typo like "token_reset_hours": "5h" must degrade to the default
+    instead of crashing the statusline on every render.
+    """
+    try:
+        value = os.environ.get(env_key)
+        return int(value) if value else default
+    except (TypeError, ValueError):
+        return default
+
+
 # Token reset window: 5h for Pro/Max, 0 to disable (Enterprise)
-TOKEN_RESET_HOURS = int(os.environ.get("VIBEMON_TOKEN_RESET_HOURS", "5") or "5")
+TOKEN_RESET_HOURS = _env_int("VIBEMON_TOKEN_RESET_HOURS", 5)
 TOKEN_RESET_MS = TOKEN_RESET_HOURS * 3600 * 1000
 
 # Plan usage (`claude -p "/usage"`): poll in the background at most this often,
 # since the call is slow and not free. Set usage_enabled=false to disable.
 USAGE_ENABLED = os.environ.get("VIBEMON_USAGE_ENABLED", "1") != "0"
-USAGE_REFRESH_SECONDS = int(os.environ.get("VIBEMON_USAGE_REFRESH", "600") or "600")
+USAGE_REFRESH_SECONDS = _env_int("VIBEMON_USAGE_REFRESH", 600)
 
 
 def _show_flag(env_key: str, default: bool) -> bool:
@@ -127,6 +142,25 @@ LOCK_RETRY_INTERVAL = 0.05
 # ============================================================================
 # Utility Functions
 # ============================================================================
+
+
+def detach_stdio() -> None:
+    """Redirect stdin/stdout/stderr to /dev/null (call after os.fork() in the child).
+
+    Claude Code captures the statusline by reading this process's stdout until
+    EOF. A forked child inherits that same fd, so the pipe won't reach EOF
+    until the child also closes it — even after the parent has already
+    exited. Without this, a slow child (lock contention in save_to_cache, or
+    the claude -p "/usage" subprocess) stalls the statusline itself.
+    """
+    try:
+        devnull_fd = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(devnull_fd, fd)
+        if devnull_fd > 2:
+            os.close(devnull_fd)
+    except OSError:
+        pass
 
 
 def read_input() -> str:
@@ -911,6 +945,7 @@ def maybe_refresh_usage_background(cache: dict[str, Any] | None) -> None:
     try:
         pid = os.fork()
         if pid == 0:
+            detach_stdio()
             try:
                 refresh_usage()
             except Exception:
@@ -1139,6 +1174,7 @@ def save_cache_background(project: str, model: str, memory: int) -> None:
         pid = os.fork()
         if pid == 0:
             # Child process - save cache and exit
+            detach_stdio()
             try:
                 save_to_cache(project, model, memory)
             except Exception:

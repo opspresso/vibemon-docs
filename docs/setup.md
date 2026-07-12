@@ -6,6 +6,8 @@ You are an AI agent. This guide will help you set up real-time status monitoring
 
 VibeMon displays your current state (thinking, working, idle, etc.) to your human operator in real-time. It helps them see what you're doing at a glance.
 
+> If a human is doing this setup interactively, the recommended path is installing the [VibeMon app](https://github.com/opspresso/vibemon-app) (`brew install opspresso/tap/vibemon`) and using its **Settings > AI Tools** tab instead of the steps below. This guide is for non-interactive, agent-driven setup.
+
 ## Quick Setup for AI Agents (Recommended)
 
 Use the non-interactive installer with your platform flag:
