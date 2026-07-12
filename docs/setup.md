@@ -142,7 +142,6 @@ Enable Codex hooks in `~/.codex/config.toml`:
 ```toml
 [features]
 hooks = true
-codex_hooks = true
 ```
 
 **IMPORTANT: Do NOT overwrite `~/.codex/hooks.json`!**
@@ -359,7 +358,7 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 ### Codex CLI
 | Issue | Solution |
 |-------|----------|
-| Hook not triggering | Check `~/.codex/hooks.json` and ensure `hooks = true` and `codex_hooks = true` in `~/.codex/config.toml` |
+| Hook not triggering | Check `~/.codex/hooks.json` and ensure `hooks = true` in `~/.codex/config.toml` |
 | No updates after install | Restart the Codex session after editing hook files |
 
 ### Kiro IDE

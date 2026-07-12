@@ -564,14 +564,8 @@ def ensure_feature_flag_enabled(config_text: str, key: str) -> str:
 
 
 def ensure_codex_hooks_enabled(config_text: str) -> str:
-    """Ensure Codex hooks feature flags are enabled in config.toml.
-
-    Sets both the current key (`hooks`) and the deprecated alias
-    (`codex_hooks`) some Codex CLI versions still read.
-    """
-    config_text = ensure_feature_flag_enabled(config_text, "hooks")
-    config_text = ensure_feature_flag_enabled(config_text, "codex_hooks")
-    return config_text
+    """Ensure the Codex hooks feature flag is enabled in config.toml."""
+    return ensure_feature_flag_enabled(config_text, "hooks")
 
 
 def install_codex(source: FileSource, cli_token: str = None) -> bool:
@@ -618,7 +612,7 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
         existing_toml = config_toml_file.read_text()
         updated_toml = ensure_codex_hooks_enabled(existing_toml)
         config_toml_file.write_text(updated_toml)
-        print(f"  {colored('✓', 'green')} codex_hooks enabled in ~/.codex/config.toml")
+        print(f"  {colored('✓', 'green')} hooks enabled in ~/.codex/config.toml")
     else:
         config_toml_file.write_text(source.get_file("codex/config.toml"))
         print(f"  {colored('✓', 'green')} ~/.codex/config.toml created")

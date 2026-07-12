@@ -92,7 +92,6 @@ Codex uses the same `~/.vibemon/config.json` as Claude Code and Kiro. Enable Cod
 ```toml
 [features]
 hooks = true
-codex_hooks = true
 ```
 
 Then merge [`codex/hooks.json`](./docs/codex/hooks.json) into your existing `~/.codex/hooks.json` (do not overwrite). Codex hooks are experimental and Windows support is currently disabled.
