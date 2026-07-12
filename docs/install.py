@@ -43,6 +43,18 @@ DOCS_BASE_URL = "https://docs.vibemon.io"
 # Shared configuration example file
 CONFIG_EXAMPLE_FILE = "config.example.json"
 
+# Claude Code statusline display configuration example file
+STATUSLINE_EXAMPLE_FILE = "statusline.example.json"
+
+# All recognized statusline-only config keys, used to migrate values out of
+# a pre-split single config.json into the new statusline.json.
+STATUSLINE_KEYS = frozenset({
+    "token_reset_hours", "usage_enabled", "usage_refresh_seconds",
+    "show_project", "show_git", "show_model", "show_tokens", "show_cost",
+    "show_duration", "show_lines", "show_memory", "show_usage",
+    "show_usage_reset", "show_version", "show_statusline",
+})
+
 
 def colored(text: str, color: str) -> str:
     """Return colored text for terminal output."""
@@ -147,8 +159,13 @@ def configure_token(config: dict, cli_token: str = None) -> dict:
     return config
 
 
-def load_or_create_config(config_path: Path, example_content: str) -> dict:
-    """Load existing config or create from example."""
+def load_or_create_config(config_path: Path, example_content: str, fallback: dict = None) -> dict:
+    """Load existing config or create from example.
+
+    `fallback` is used if `example_content` itself fails to parse (e.g. a
+    corrupted download); defaults to the vibemon config.json shape for
+    backward compatibility with existing callers.
+    """
     if config_path.exists():
         try:
             with open(config_path) as f:
@@ -160,6 +177,8 @@ def load_or_create_config(config_path: Path, example_content: str) -> dict:
     try:
         return json.loads(example_content)
     except json.JSONDecodeError:
+        if fallback is not None:
+            return fallback
         return {
             "debug": False,
             "cache_path": "~/.vibemon/cache/projects.json",
@@ -417,6 +436,42 @@ def configure_vibemon_config(source: FileSource, cli_token: str = None) -> str:
     return VIBEMON_CONFIG_CACHE["token"]
 
 
+def configure_statusline_config(source: FileSource) -> None:
+    """Configure ~/.vibemon/statusline.json (Claude Code statusline display
+    settings). On first creation, migrates any statusline-only keys found in
+    a pre-split single config.json so existing customizations aren't reset.
+    """
+    vibemon_home = Path.home() / ".vibemon"
+    vibemon_home.mkdir(parents=True, exist_ok=True)
+    statusline_path = vibemon_home / "statusline.json"
+    config_path = vibemon_home / "config.json"
+    is_new = not statusline_path.exists()
+
+    print("\nConfiguring statusline display settings:")
+    statusline_content = source.get_file(STATUSLINE_EXAMPLE_FILE)
+    # fallback={}: statusline.json has no config.json-shaped default worth
+    # falling back to; an empty dict just leaves every show_*/usage_* toggle
+    # at statusline.py's own coded-in defaults, which is the safest state.
+    statusline_config = load_or_create_config(statusline_path, statusline_content, fallback={})
+
+    if is_new:
+        print("  Creating new config at ~/.vibemon/statusline.json")
+        if config_path.exists():
+            try:
+                legacy = json.loads(config_path.read_text())
+            except json.JSONDecodeError:
+                legacy = {}
+            migrated = {k: legacy[k] for k in STATUSLINE_KEYS if k in legacy}
+            if migrated:
+                statusline_config.update(migrated)
+                print(f"  {colored('✓', 'green')} Migrated {len(migrated)} statusline setting(s) from config.json")
+    else:
+        print(f"  {colored('✓', 'green')} ~/.vibemon/statusline.json exists")
+
+    if save_config(statusline_path, statusline_config):
+        print(f"  {colored('✓', 'green')} ~/.vibemon/statusline.json saved")
+
+
 def install_claude(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon for Claude Code."""
     claude_home = Path.home() / ".claude"
@@ -478,6 +533,7 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
         print(f"  {colored('✓', 'green')} settings.json created")
 
     configure_vibemon_config(source, cli_token)
+    configure_statusline_config(source)
 
     print(f"\n{colored('Claude Code installation complete!', 'green')}")
     return True

@@ -125,6 +125,8 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
 - If `statusLine` key exists, ask your human before replacing
 - Keep all other existing settings unchanged
 
+Optionally, create `~/.vibemon/statusline.json` to customize the statusline's display toggles (`show_*`) and usage-polling settings (`usage_enabled`, `usage_refresh_seconds`, `token_reset_hours`) — see [statusline.example.json](https://docs.vibemon.io/statusline.example.json). This file is separate from `~/.vibemon/config.json` and not required; statusline.py uses sensible defaults when it's absent.
+
 ### For Codex CLI (Manual)
 
 Download hook files:

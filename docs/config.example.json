@@ -4,11 +4,6 @@
   "auto_launch": true,
   "http_urls": [],
   "serial_port": null,
-  "show_cost": true,
-  "show_duration": false,
-  "show_lines": true,
-  "show_tokens": true,
-  "usage_refresh_seconds": 600,
   "vibemon_token": "",
   "vibemon_url": "https://vibemon.io"
 }

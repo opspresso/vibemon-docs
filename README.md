@@ -62,7 +62,7 @@ After installation, edit `~/.vibemon/config.json` to configure your targets:
 | `vibemon_url` | VibeMon cloud API URL | `https://vibemon.io` |
 | `vibemon_token` | VibeMon API access token (from dashboard) | |
 
-Claude Code's statusline also reads additional `show_*` display toggles (e.g. `show_cost`, `show_git`, `show_model`, `show_tokens`) and `usage_enabled`/`usage_refresh_seconds` — see [config.example.json](./docs/config.example.json) for the full set of defaults.
+Claude Code's statusline reads a separate `~/.vibemon/statusline.json` for display toggles (e.g. `show_cost`, `show_git`, `show_model`, `show_tokens`) and usage-polling settings (`usage_enabled`, `usage_refresh_seconds`, `token_reset_hours`) — see [statusline.example.json](./docs/statusline.example.json) for the full set of defaults. This file is optional; statusline.py falls back to sensible defaults (and to any matching keys still in `config.json`) when it's absent.
 
 ### Codex Configuration
 

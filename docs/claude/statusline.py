@@ -6,7 +6,6 @@ Displays status line and sends context usage to VibeMon
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -18,35 +17,45 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+
 # ============================================================================
 # Configuration Loading
 # ============================================================================
 
 
 def load_config() -> None:
-    """Load configuration from config.json and set as environment variables."""
-    config_file = Path.home() / ".vibemon" / "config.json"
-    if not config_file.exists():
-        return
+    """Load vibemon config (cache_path only, shared with hooks/vibemon.py)
+    and statusline display config, and set both as environment variables.
 
-    try:
-        with open(config_file) as f:
-            config = json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return
+    statusline.json values win over any same-named legacy keys still
+    present in config.json, for backward compatibility with installs that
+    haven't re-run the installer since the config split.
+    """
+    vibemon_home = Path.home() / ".vibemon"
 
-    # Map config keys to environment variables
+    def _load(path: Path) -> dict[str, Any]:
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, IOError):
+            return {}
+
+    config = _load(vibemon_home / "config.json")
+    statusline_config = _load(vibemon_home / "statusline.json")
+
+    # cache_path is a shared vibemon setting: statusline.py must agree with
+    # hooks/vibemon.py on where the cache lives, even though it doesn't use
+    # any of config.json's other (monitor-target) keys.
+    cache_path = config.get("cache_path")
+    if cache_path:
+        os.environ.setdefault("VIBEMON_CACHE_PATH", str(cache_path))
+
+    # Map statusline-only config keys to environment variables
     key_mapping = {
-        "debug": ("DEBUG", lambda v: "1" if v else "0"),
-        "cache_path": ("VIBEMON_CACHE_PATH", str),
-        "auto_launch": ("VIBEMON_AUTO_LAUNCH", lambda v: "1" if v else "0"),
-        "http_urls": (
-            "VIBEMON_HTTP_URLS",
-            lambda v: ",".join(v) if isinstance(v, list) else str(v),
-        ),
-        "serial_port": ("VIBEMON_SERIAL_PORT", str),
-        "vibemon_url": ("VIBEMON_URL", str),
-        "vibemon_token": ("VIBEMON_TOKEN", str),
         "token_reset_hours": ("VIBEMON_TOKEN_RESET_HOURS", str),
         "usage_enabled": ("VIBEMON_USAGE_ENABLED", lambda v: "1" if v else "0"),
         "usage_refresh_seconds": ("VIBEMON_USAGE_REFRESH", str),
@@ -63,10 +72,10 @@ def load_config() -> None:
         "show_version": ("VIBEMON_SHOW_VERSION", lambda v: "1" if v else "0"),
         "show_statusline": ("VIBEMON_SHOW_STATUSLINE", lambda v: "1" if v else "0"),
     }
-
+    merged = {**config, **statusline_config}  # statusline.json wins on overlap
     for config_key, (env_key, converter) in key_mapping.items():
-        if config_key in config and config[config_key] is not None:
-            value = converter(config[config_key])
+        if config_key in merged and merged[config_key] is not None:
+            value = converter(merged[config_key])
             if value:
                 os.environ.setdefault(env_key, value)
 
@@ -342,35 +351,38 @@ def get_cache_path() -> str:
 def save_to_cache(project: str, model: str, memory: int) -> None:
     """Save project metadata to cache file.
 
-    Uses fcntl for proper file locking to avoid race conditions.
+    Uses fcntl for proper file locking to avoid race conditions (skipped on
+    platforms without fcntl, e.g. Windows; the atomic os.replace below still
+    prevents file corruption there, at the cost of possible lost updates
+    under concurrent writers).
     """
     if not project:
         return
 
     cache_path = get_cache_path()
     cache_dir = os.path.dirname(cache_path)
-
-    # Ensure cache directory exists
-    os.makedirs(cache_dir, exist_ok=True)
-
-    lockfile = f"{cache_path}.lock"
     timestamp = int(time.time())
     lock_fd = None
 
     try:
-        # Use fcntl for proper file locking (atomic, no race condition)
-        lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
+        # Ensure cache directory exists
+        os.makedirs(cache_dir, exist_ok=True)
 
-        # Try to acquire lock with timeout
-        start_time = time.monotonic()
-        while True:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break  # Lock acquired
-            except (IOError, OSError):
-                if time.monotonic() - start_time > LOCK_TIMEOUT_SECONDS:
-                    return  # Timeout - skip cache update
-                time.sleep(LOCK_RETRY_INTERVAL)
+        if fcntl is not None:
+            # Use fcntl for proper file locking (atomic, no race condition)
+            lockfile = f"{cache_path}.lock"
+            lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
+
+            # Try to acquire lock with timeout
+            start_time = time.monotonic()
+            while True:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break  # Lock acquired
+                except (IOError, OSError):
+                    if time.monotonic() - start_time > LOCK_TIMEOUT_SECONDS:
+                        return  # Timeout - skip cache update
+                    time.sleep(LOCK_RETRY_INTERVAL)
 
         # Read existing cache or create empty object
         cache: dict[str, Any] = {}
@@ -512,21 +524,19 @@ def save_window_start(window_start: float) -> None:
         pass
 
 
-def get_token_reset_info(duration_ms: int | float | str | None) -> tuple[int, str]:
-    """Calculate token reset remaining time and local reset clock time.
+def get_token_reset_info(duration_ms: int | float | str | None) -> int:
+    """Calculate remaining time (ms) until the 5-hour token window resets.
 
     Tracks the 5-hour token window using a persisted start time,
     so the reset countdown stays accurate across multiple sessions.
 
-    Returns:
-        (remaining_ms, reset_time_str) e.g. (180000, "17:00")
-        (0, "") if disabled or unavailable
+    Returns 0 if disabled or unavailable.
     """
     if TOKEN_RESET_MS <= 0:
-        return (0, "")
+        return 0
 
     if duration_ms is None or duration_ms == "null" or duration_ms == 0:
-        return (0, "")
+        return 0
 
     try:
         now = time.time()
@@ -548,21 +558,14 @@ def get_token_reset_info(duration_ms: int | float | str | None) -> tuple[int, st
         remaining_seconds = int(token_reset_seconds - (now - window_start))
 
         if remaining_seconds <= 0:
-            return (0, "")
+            return 0
 
-        remaining_ms = remaining_seconds * 1000
-
-        # Calculate actual local reset time
-        reset_timestamp = now + remaining_seconds
-        reset_local = time.localtime(reset_timestamp)
-        reset_time_str = time.strftime("%H:%M", reset_local)
-
-        return (remaining_ms, reset_time_str)
+        return remaining_seconds * 1000
     except (ValueError, TypeError):
-        return (0, "")
+        return 0
 
 
-def format_token_reset(remaining_ms: int, reset_time_str: str) -> str:
+def format_token_reset(remaining_ms: int) -> str:
     """Format token reset display with color based on urgency.
 
     Shows remaining time until token reset (e.g. "⏳ 4h35m").
@@ -658,6 +661,30 @@ def build_progress_bar(percent_str: str | int | float, width: int = 10) -> str:
 # ============================================================================
 
 
+def _parse_epoch(value: Any) -> float | None:
+    """Parse a resets_at value into a Unix epoch timestamp.
+
+    Accepts either a numeric epoch (int/float/numeric string) or an
+    ISO-8601 timestamp string (e.g. "2026-07-12T17:00:00Z"). Returns None
+    if the value is missing or unparseable.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        text = value.strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(text).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
 def usage_from_rate_limits(data: dict[str, Any]) -> dict[str, Any] | None:
     """Build a usage-cache-shaped dict from the statusline payload's official
     `rate_limits` field (Claude Code >= v2.1.80), avoiding a `claude -p
@@ -677,11 +704,9 @@ def usage_from_rate_limits(data: dict[str, Any]) -> dict[str, Any] | None:
         except (TypeError, ValueError):
             return None
         entry: dict[str, Any] = {"pct": pct}
-        resets_at = bucket.get("resets_at")
-        try:
-            entry["resets_at"] = float(resets_at)
-        except (TypeError, ValueError):
-            pass
+        resets_at = _parse_epoch(bucket.get("resets_at"))
+        if resets_at is not None:
+            entry["resets_at"] = resets_at
         return entry
 
     session = _entry(rate_limits.get("five_hour"))
@@ -763,25 +788,48 @@ def parse_usage_output(text: str) -> dict[str, Any]:
     return result
 
 
+def apply_session_floor(usage: dict[str, Any]) -> dict[str, Any]:
+    """Floor the 5-hour session pct to 1 when the weekly window has usage but
+    the session reads 0 (typical right after a session reset), so its bar
+    stays visible alongside the weekly bar instead of being hidden.
+    """
+    session = usage.get("session")
+    week = usage.get("week_all")
+    if (
+        isinstance(week, dict)
+        and isinstance(week.get("pct"), int)
+        and week["pct"] >= 1
+        and isinstance(session, dict)
+        and session.get("pct") == 0
+    ):
+        return {**usage, "session": {**session, "pct": 1}}
+    return usage
+
+
 def save_usage_cache(usage: dict[str, Any]) -> None:
-    """Atomically write the usage cache (stamps a fresh `ts`)."""
+    """Atomically write the usage cache (stamps a fresh `ts`).
+
+    Takes a single non-blocking lock attempt (unlike save_to_cache's
+    retry-with-timeout loop) because this is called synchronously from
+    statusline main() on the direct rate_limits path — every render, not in
+    a backgrounded child. Retrying for up to LOCK_TIMEOUT_SECONDS here would
+    stall the status line itself under concurrent-session contention; losing
+    an occasional write is harmless since the next render just writes again.
+    """
     cache_path = get_usage_cache_path()
+    lock_fd = None
     try:
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+
+        if fcntl is not None:
+            lockfile = f"{cache_path}.lock"
+            lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (IOError, OSError):
+                return  # Another writer holds it; skip, next render retries
+
         payload = dict(usage)
-        # When the weekly window has usage but the 5-hour session reads 0
-        # (typical right after a session reset), floor the session to 1% so its
-        # bar stays visible alongside the weekly bar instead of being hidden.
-        session = payload.get("session")
-        week = payload.get("week_all")
-        if (
-            isinstance(week, dict)
-            and isinstance(week.get("pct"), int)
-            and week["pct"] >= 1
-            and isinstance(session, dict)
-            and session.get("pct") == 0
-        ):
-            payload["session"] = {**session, "pct": 1}
         payload["ts"] = int(time.time())
         tmpfile = f"{cache_path}.tmp.{os.getpid()}"
         with open(tmpfile, "w") as f:
@@ -789,6 +837,13 @@ def save_usage_cache(usage: dict[str, Any]) -> None:
         os.replace(tmpfile, cache_path)
     except (IOError, OSError):
         pass
+    finally:
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            except OSError:
+                pass
 
 
 def refresh_usage() -> None:
@@ -796,16 +851,21 @@ def refresh_usage() -> None:
 
     A non-blocking lock ensures only one refresh runs at a time; concurrent
     callers exit immediately instead of spawning duplicate `claude` processes.
+    This subprocess-guard lock is released before writing the cache, since
+    save_usage_cache() acquires its own lock on the same file for the write
+    itself — holding both at once would deadlock against ourselves.
     """
     lockfile = f"{get_usage_cache_path()}.lock"
     lock_fd = None
+    usage: dict[str, Any] = {}
     try:
         os.makedirs(os.path.dirname(lockfile), exist_ok=True)
-        lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (IOError, OSError):
-            return  # Another refresh is in flight
+        if fcntl is not None:
+            lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (IOError, OSError):
+                return  # Another refresh is in flight
 
         try:
             result = subprocess.run(
@@ -818,8 +878,6 @@ def refresh_usage() -> None:
             return
 
         usage = parse_usage_output(result.stdout)
-        if usage:
-            save_usage_cache(usage)
     finally:
         if lock_fd is not None:
             try:
@@ -827,6 +885,9 @@ def refresh_usage() -> None:
                 os.close(lock_fd)
             except OSError:
                 pass
+
+    if usage:
+        save_usage_cache(apply_session_floor(usage))
 
 
 def maybe_refresh_usage_background(cache: dict[str, Any] | None) -> None:
@@ -1125,8 +1186,9 @@ def main() -> None:
     )
     dir_name = get_project_name(current_dir) if current_dir else ""
 
-    # Get additional info
-    git_info = get_git_info(current_dir)
+    # Get additional info. git_info is purely for display, so skip the
+    # `git status` subprocess entirely when it won't be shown.
+    git_info = get_git_info(current_dir) if (SHOW_GIT and SHOW_STATUSLINE) else ""
     context_usage = get_context_usage(data)
 
     # Extract context window data
@@ -1154,6 +1216,7 @@ def main() -> None:
     # claude -p "/usage" subprocess cache for older Claude Code versions.
     usage_cache = usage_from_rate_limits(data)
     if usage_cache is not None:
+        usage_cache = apply_session_floor(usage_cache)
         save_usage_cache(usage_cache)
     else:
         usage_cache = load_usage_cache()
@@ -1164,8 +1227,8 @@ def main() -> None:
     # the duration-based 5h-window heuristic when usage data isn't available.
     usage_reset = format_usage_reset(usage_cache)
     if not usage_reset:
-        remaining_ms, reset_time_str = get_token_reset_info(duration)
-        usage_reset = format_token_reset(remaining_ms, reset_time_str)
+        remaining_ms = get_token_reset_info(duration)
+        usage_reset = format_token_reset(remaining_ms)
 
     # Extract Claude Code version
     version = data.get("version", "") or ""
