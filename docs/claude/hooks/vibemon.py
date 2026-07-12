@@ -7,12 +7,12 @@ Note: Model and Memory are read from statusline.py's cache file
 
 from __future__ import annotations
 
-import fcntl
 import glob
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,6 +21,11 @@ from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
 
 # ============================================================================
 # Configuration Loading
@@ -85,6 +90,11 @@ SERIAL_BAUD_RATE = "115200"
 
 # HTTP configuration
 HTTP_TIMEOUT_SECONDS = 5
+
+# Cache configuration: entries older than this are treated as unknown rather
+# than sent as-is, since statusline.py (the only writer) may not have run
+# recently for this project/session and the value could be misleadingly stale.
+CACHE_STALE_SECONDS = 1800
 
 # Desktop launch configuration
 DESKTOP_LAUNCH_WAIT_SECONDS = 3
@@ -250,7 +260,13 @@ def get_state(event_name: str, permission_mode: str = "default") -> str:
 
 
 def get_project_metadata(project: str) -> dict[str, Any]:
-    """Get model and memory from cache for a project."""
+    """Get model and memory from cache for a project.
+
+    Entries older than CACHE_STALE_SECONDS are treated as unknown (empty
+    dict) rather than returned as-is, since statusline.py (the only writer)
+    may not have run for this project recently and the cached model/memory
+    could be misleadingly stale (e.g. left over from a prior session).
+    """
     if not project:
         return {}
 
@@ -262,9 +278,20 @@ def get_project_metadata(project: str) -> dict[str, Any]:
     try:
         with open(config.cache_path) as f:
             cache = json.load(f)
-        return cache.get(project, {})
+        entry = cache.get(project, {})
     except (json.JSONDecodeError, IOError):
         return {}
+
+    if not isinstance(entry, dict):
+        return {}
+
+    try:
+        if (time.time() - float(entry.get("ts", 0))) > CACHE_STALE_SECONDS:
+            return {}
+    except (TypeError, ValueError):
+        return {}
+
+    return entry
 
 
 def get_usage_metadata() -> dict[str, Any]:
@@ -285,6 +312,12 @@ def get_usage_metadata() -> dict[str, Any]:
         with open(usage_path) as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, IOError):
+        return {}
+
+    try:
+        if (time.time() - float(data.get("ts", 0))) > CACHE_STALE_SECONDS:
+            return {}
+    except (TypeError, ValueError):
         return {}
 
     result: dict[str, Any] = {}
@@ -334,21 +367,30 @@ def build_payload(state: str, tool: str, project: str) -> dict[str, Any]:
 
 def _get_serial_lock_path(port: str) -> str:
     """Get lock file path for serial port."""
-    return f"/tmp/vibemon-serial-{port.replace('/', '_')}.lock"
+    return os.path.join(
+        tempfile.gettempdir(), f"vibemon-serial-{port.replace('/', '_')}.lock"
+    )
 
 
 def _get_serial_debounce_path(port: str) -> str:
     """Get debounce file path for serial port."""
-    return f"/tmp/vibemon-serial-{port.replace('/', '_')}.debounce"
+    return os.path.join(
+        tempfile.gettempdir(), f"vibemon-serial-{port.replace('/', '_')}.debounce"
+    )
 
 
 def _get_serial_debounce_lock_path(port: str) -> str:
     """Get debounce lock file path for serial port."""
-    return f"/tmp/vibemon-serial-{port.replace('/', '_')}.dlock"
+    return os.path.join(
+        tempfile.gettempdir(), f"vibemon-serial-{port.replace('/', '_')}.dlock"
+    )
 
 
 def _acquire_lock(lock_fd: int, max_retries: int = SERIAL_LOCK_MAX_RETRIES) -> bool:
-    """Try to acquire file lock with retries."""
+    """Try to acquire file lock with retries. Returns False immediately if
+    fcntl isn't available (e.g. Windows)."""
+    if fcntl is None:
+        return False
     for attempt in range(max_retries):
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -385,10 +427,16 @@ def send_serial_raw(port: str, data: str) -> bool:
                 capture_output=True,
             )
 
-            # Write data
-            with open(port, "w") as f:
-                f.write(data + "\n")
-                f.flush()
+            # Write data. Open non-blocking so a device that never asserts
+            # DCD/carrier can't hang this call indefinitely.
+            open_flags = os.O_WRONLY
+            if hasattr(os, "O_NONBLOCK"):
+                open_flags |= os.O_NONBLOCK
+            port_fd = os.open(port, open_flags)
+            try:
+                os.write(port_fd, (data + "\n").encode())
+            finally:
+                os.close(port_fd)
 
             time.sleep(SERIAL_LOCK_RETRY_INTERVAL)
             return True
@@ -414,6 +462,11 @@ def send_serial(port: str, data: str) -> bool:
     """
     if not os.path.exists(port):
         return False
+
+    if fcntl is None:
+        # No locking primitive available (e.g. Windows): skip debounce
+        # coordination and send directly.
+        return send_serial_raw(port, data)
 
     debounce_path = _get_serial_debounce_path(port)
     lock_path = _get_serial_debounce_lock_path(port)

@@ -6,12 +6,12 @@ Desktop App + ESP32 (USB Serial / HTTP)
 
 from __future__ import annotations
 
-import fcntl
 import glob
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
 
 # ============================================================================
 # Configuration Loading
@@ -278,21 +283,30 @@ def build_payload(state: str, tool: str, project: str) -> dict[str, Any]:
 
 def _get_serial_lock_path(port: str) -> str:
     """Get lock file path for serial port."""
-    return f"/tmp/vibemon-serial-{port.replace('/', '_')}.lock"
+    return os.path.join(
+        tempfile.gettempdir(), f"vibemon-serial-{port.replace('/', '_')}.lock"
+    )
 
 
 def _get_serial_debounce_path(port: str) -> str:
     """Get debounce file path for serial port."""
-    return f"/tmp/vibemon-serial-{port.replace('/', '_')}.debounce"
+    return os.path.join(
+        tempfile.gettempdir(), f"vibemon-serial-{port.replace('/', '_')}.debounce"
+    )
 
 
 def _get_serial_debounce_lock_path(port: str) -> str:
     """Get debounce lock file path for serial port."""
-    return f"/tmp/vibemon-serial-{port.replace('/', '_')}.dlock"
+    return os.path.join(
+        tempfile.gettempdir(), f"vibemon-serial-{port.replace('/', '_')}.dlock"
+    )
 
 
 def _acquire_lock(lock_fd: int, max_retries: int = SERIAL_LOCK_MAX_RETRIES) -> bool:
-    """Try to acquire file lock with retries."""
+    """Try to acquire file lock with retries. Returns False immediately if
+    fcntl isn't available (e.g. Windows)."""
+    if fcntl is None:
+        return False
     for attempt in range(max_retries):
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -329,10 +343,16 @@ def send_serial_raw(port: str, data: str) -> bool:
                 capture_output=True,
             )
 
-            # Write data
-            with open(port, "w") as f:
-                f.write(data + "\n")
-                f.flush()
+            # Write data. Open non-blocking so a device that never asserts
+            # DCD/carrier can't hang this call indefinitely.
+            open_flags = os.O_WRONLY
+            if hasattr(os, "O_NONBLOCK"):
+                open_flags |= os.O_NONBLOCK
+            port_fd = os.open(port, open_flags)
+            try:
+                os.write(port_fd, (data + "\n").encode())
+            finally:
+                os.close(port_fd)
 
             time.sleep(SERIAL_LOCK_RETRY_INTERVAL)
             return True
@@ -358,6 +378,11 @@ def send_serial(port: str, data: str) -> bool:
     """
     if not os.path.exists(port):
         return False
+
+    if fcntl is None:
+        # No locking primitive available (e.g. Windows): skip debounce
+        # coordination and send directly.
+        return send_serial_raw(port, data)
 
     debounce_path = _get_serial_debounce_path(port)
     lock_path = _get_serial_debounce_lock_path(port)
