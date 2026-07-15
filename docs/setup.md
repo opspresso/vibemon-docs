@@ -97,22 +97,112 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
     ],
     "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
     ],
     "PreCompact": [
-      { "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
     ],
     "Notification": [
-      { "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vibemon.py" }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
@@ -155,14 +245,66 @@ Merge the following into your existing `~/.codex/hooks.json`:
       {
         "matcher": "startup|resume",
         "hooks": [
-          { "type": "command", "command": "python3 ~/.codex/hooks/vibemon.py" }
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: session start"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: subagent start"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: subagent done"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: compacting"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: compact done"
+          }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 ~/.codex/hooks/vibemon.py" }
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: prompt submit"
+          }
         ]
       }
     ],
@@ -170,7 +312,11 @@ Merge the following into your existing `~/.codex/hooks.json`:
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python3 ~/.codex/hooks/vibemon.py" }
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: bash start"
+          }
         ]
       }
     ],
@@ -178,7 +324,11 @@ Merge the following into your existing `~/.codex/hooks.json`:
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python3 ~/.codex/hooks/vibemon.py" }
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: approval needed"
+          }
         ]
       }
     ],
@@ -186,14 +336,22 @@ Merge the following into your existing `~/.codex/hooks.json`:
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python3 ~/.codex/hooks/vibemon.py" }
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: bash finished"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 ~/.codex/hooks/vibemon.py" }
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: turn done"
+          }
         ]
       }
     ]
