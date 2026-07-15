@@ -1299,4 +1299,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # Last-resort backstop: an unexpected payload must degrade to an
+        # empty status line, not a traceback that breaks the line entirely.
+        # Per-field guards inside main() handle everything anticipated.
+        pass

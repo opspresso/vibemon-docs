@@ -261,7 +261,12 @@ def show_diff(old_content: str, new_content: str, filename: str) -> bool:
 
 
 def write_file_with_diff(dst: Path, content: str, description: str, executable: bool = False) -> bool:
-    """Write content to a file, showing diff if it already exists."""
+    """Write content to a file, showing diff if it already exists.
+
+    Returns False only when the write fails; a user-declined overwrite and an
+    effectively-unchanged file both count as success so installers can treat
+    False as a real error.
+    """
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
 
@@ -284,8 +289,8 @@ def write_file_with_diff(dst: Path, content: str, description: str, executable: 
                     return True
                 else:
                     print(f"  {colored('!', 'yellow')} {description} (skipped)")
-                    return False
-            return False
+                    return True
+            return True
         else:
             dst.write_text(content)
             if executable:
@@ -437,7 +442,7 @@ def configure_vibemon_config(source: FileSource, cli_token: str = None) -> str:
     return VIBEMON_CONFIG_CACHE["token"]
 
 
-def install_vibemon_shared(source: FileSource) -> None:
+def install_vibemon_shared(source: FileSource) -> bool:
     """Install shared ~/.vibemon assets once per run, for every platform.
 
     usage.py is the standalone plan-usage cache refresher run by the Desktop
@@ -445,12 +450,13 @@ def install_vibemon_shared(source: FileSource) -> None:
     just Claude Code's.
     """
     if "shared_installed" in VIBEMON_CONFIG_CACHE:
-        return
-    VIBEMON_CONFIG_CACHE["shared_installed"] = True
+        return VIBEMON_CONFIG_CACHE["shared_installed"]
 
     # usage.py -> ~/.vibemon/usage.py
     content = source.get_file("vibemon/usage.py")
-    write_file_with_diff(Path.home() / ".vibemon" / "usage.py", content, "~/.vibemon/usage.py", executable=True)
+    ok = write_file_with_diff(Path.home() / ".vibemon" / "usage.py", content, "~/.vibemon/usage.py", executable=True)
+    VIBEMON_CONFIG_CACHE["shared_installed"] = ok
+    return ok
 
 
 def configure_statusline_config(source: FileSource) -> None:
@@ -502,14 +508,15 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
     (claude_home / "hooks").mkdir(parents=True, exist_ok=True)
 
     print("Copying files:")
+    ok = True
 
     # statusline.py -> ~/.claude/statusline.py
     content = source.get_file("claude/statusline.py")
-    write_file_with_diff(claude_home / "statusline.py", content, "~/.claude/statusline.py", executable=True)
+    ok &= write_file_with_diff(claude_home / "statusline.py", content, "~/.claude/statusline.py", executable=True)
 
     # hooks/vibemon.py -> ~/.claude/hooks/vibemon.py
     content = source.get_file("claude/hooks/vibemon.py")
-    write_file_with_diff(claude_home / "hooks" / "vibemon.py", content, "~/.claude/hooks/vibemon.py", executable=True)
+    ok &= write_file_with_diff(claude_home / "hooks" / "vibemon.py", content, "~/.claude/hooks/vibemon.py", executable=True)
 
     # Handle settings.json
     print("\nConfiguring settings.json:")
@@ -551,7 +558,11 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
 
     configure_vibemon_config(source, cli_token)
     configure_statusline_config(source)
-    install_vibemon_shared(source)
+    ok &= install_vibemon_shared(source)
+
+    if not ok:
+        print(f"\n{colored('✗ Claude Code installation finished with errors — some files were not written.', 'red')}")
+        return False
 
     print(f"\n{colored('Claude Code installation complete!', 'green')}")
     return True
@@ -600,7 +611,7 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
     print("Copying files:")
 
     content = source.get_file("codex/hooks/vibemon.py")
-    write_file_with_diff(
+    ok = write_file_with_diff(
         codex_home / "hooks" / "vibemon.py",
         content,
         "~/.codex/hooks/vibemon.py",
@@ -635,7 +646,11 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
         print(f"  {colored('✓', 'green')} ~/.codex/config.toml created")
 
     configure_vibemon_config(source, cli_token)
-    install_vibemon_shared(source)
+    ok &= install_vibemon_shared(source)
+
+    if not ok:
+        print(f"\n{colored('✗ Codex CLI installation finished with errors — some files were not written.', 'red')}")
+        return False
 
     print(f"\n{colored('Codex CLI installation complete!', 'green')}")
     print(f"\n{colored('Notes:', 'yellow')}")
@@ -661,7 +676,7 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
 
     # vibemon.py -> ~/.kiro/hooks/vibemon.py
     content = source.get_file("kiro/hooks/vibemon.py")
-    write_file_with_diff(kiro_home / "hooks" / "vibemon.py", content, "~/.kiro/hooks/vibemon.py", executable=True)
+    ok = write_file_with_diff(kiro_home / "hooks" / "vibemon.py", content, "~/.kiro/hooks/vibemon.py", executable=True)
 
     # Handle agents/default.json (merge, don't overwrite)
     print("\nConfiguring agents/default.json:")
@@ -695,10 +710,14 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
     ]
     for hook_file in kiro_hook_files:
         content = source.get_file(f"kiro/hooks/{hook_file}")
-        write_file_with_diff(kiro_home / "hooks" / hook_file, content, f"~/.kiro/hooks/{hook_file}")
+        ok &= write_file_with_diff(kiro_home / "hooks" / hook_file, content, f"~/.kiro/hooks/{hook_file}")
 
     configure_vibemon_config(source, cli_token)
-    install_vibemon_shared(source)
+    ok &= install_vibemon_shared(source)
+
+    if not ok:
+        print(f"\n{colored('✗ Kiro IDE installation finished with errors — some files were not written.', 'red')}")
+        return False
 
     print(f"\n{colored('Kiro IDE installation complete!', 'green')}")
     print(f"\n{colored('Next steps (Kiro CLI):', 'yellow')}")
@@ -778,7 +797,7 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     # vibemon_url, vibemon_token) from ~/.vibemon/config.json as fallback,
     # so make sure it exists and holds the token.
     token = configure_vibemon_config(source, cli_token)
-    install_vibemon_shared(source)
+    ok = install_vibemon_shared(source)
 
     plugin_dir = openclaw_home / "extensions" / "vibemon-bridge"
     plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -787,11 +806,11 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
 
     # openclaw.plugin.json
     content = source.get_file("openclaw/extensions/openclaw.plugin.json")
-    write_file_with_diff(plugin_dir / "openclaw.plugin.json", content, "openclaw.plugin.json")
+    ok &= write_file_with_diff(plugin_dir / "openclaw.plugin.json", content, "openclaw.plugin.json")
 
     # index.mjs
     content = source.get_file("openclaw/extensions/index.mjs")
-    write_file_with_diff(plugin_dir / "index.mjs", content, "index.mjs")
+    ok &= write_file_with_diff(plugin_dir / "index.mjs", content, "index.mjs")
 
     # Handle openclaw.json (merge, don't overwrite)
     print("\nConfiguring openclaw.json:")
@@ -873,6 +892,10 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     # plugin-registry snapshot and the plugin's hooks never run.
     print("\nRefreshing OpenClaw plugin registry:")
     refresh_openclaw_plugin_registry()
+
+    if not ok:
+        print(f"\n{colored('✗ OpenClaw installation finished with errors — some files were not written.', 'red')}")
+        return False
 
     print(f"\n{colored('OpenClaw installation complete!', 'green')}")
     print(f"\n{colored('Next steps:', 'yellow')}")
