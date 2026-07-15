@@ -495,6 +495,11 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
     content = source.get_file("claude/hooks/vibemon.py")
     write_file_with_diff(claude_home / "hooks" / "vibemon.py", content, "~/.claude/hooks/vibemon.py", executable=True)
 
+    # usage.py -> ~/.vibemon/usage.py (standalone plan-usage cache refresher,
+    # run by the Desktop app on startup or on a schedule)
+    content = source.get_file("vibemon/usage.py")
+    write_file_with_diff(Path.home() / ".vibemon" / "usage.py", content, "~/.vibemon/usage.py", executable=True)
+
     # Handle settings.json
     print("\nConfiguring settings.json:")
     settings_file = claude_home / "settings.json"
