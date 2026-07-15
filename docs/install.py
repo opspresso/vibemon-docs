@@ -437,6 +437,22 @@ def configure_vibemon_config(source: FileSource, cli_token: str = None) -> str:
     return VIBEMON_CONFIG_CACHE["token"]
 
 
+def install_vibemon_shared(source: FileSource) -> None:
+    """Install shared ~/.vibemon assets once per run, for every platform.
+
+    usage.py is the standalone plan-usage cache refresher run by the Desktop
+    app on startup or on a schedule; it belongs to every installation, not
+    just Claude Code's.
+    """
+    if "shared_installed" in VIBEMON_CONFIG_CACHE:
+        return
+    VIBEMON_CONFIG_CACHE["shared_installed"] = True
+
+    # usage.py -> ~/.vibemon/usage.py
+    content = source.get_file("vibemon/usage.py")
+    write_file_with_diff(Path.home() / ".vibemon" / "usage.py", content, "~/.vibemon/usage.py", executable=True)
+
+
 def configure_statusline_config(source: FileSource) -> None:
     """Configure ~/.vibemon/statusline.json (Claude Code statusline display
     settings). On first creation, migrates any statusline-only keys found in
@@ -495,11 +511,6 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
     content = source.get_file("claude/hooks/vibemon.py")
     write_file_with_diff(claude_home / "hooks" / "vibemon.py", content, "~/.claude/hooks/vibemon.py", executable=True)
 
-    # usage.py -> ~/.vibemon/usage.py (standalone plan-usage cache refresher,
-    # run by the Desktop app on startup or on a schedule)
-    content = source.get_file("vibemon/usage.py")
-    write_file_with_diff(Path.home() / ".vibemon" / "usage.py", content, "~/.vibemon/usage.py", executable=True)
-
     # Handle settings.json
     print("\nConfiguring settings.json:")
     settings_file = claude_home / "settings.json"
@@ -540,6 +551,7 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
 
     configure_vibemon_config(source, cli_token)
     configure_statusline_config(source)
+    install_vibemon_shared(source)
 
     print(f"\n{colored('Claude Code installation complete!', 'green')}")
     return True
@@ -623,6 +635,7 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
         print(f"  {colored('✓', 'green')} ~/.codex/config.toml created")
 
     configure_vibemon_config(source, cli_token)
+    install_vibemon_shared(source)
 
     print(f"\n{colored('Codex CLI installation complete!', 'green')}")
     print(f"\n{colored('Notes:', 'yellow')}")
@@ -685,6 +698,7 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
         write_file_with_diff(kiro_home / "hooks" / hook_file, content, f"~/.kiro/hooks/{hook_file}")
 
     configure_vibemon_config(source, cli_token)
+    install_vibemon_shared(source)
 
     print(f"\n{colored('Kiro IDE installation complete!', 'green')}")
     print(f"\n{colored('Next steps (Kiro CLI):', 'yellow')}")
@@ -764,6 +778,7 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     # vibemon_url, vibemon_token) from ~/.vibemon/config.json as fallback,
     # so make sure it exists and holds the token.
     token = configure_vibemon_config(source, cli_token)
+    install_vibemon_shared(source)
 
     plugin_dir = openclaw_home / "extensions" / "vibemon-bridge"
     plugin_dir.mkdir(parents=True, exist_ok=True)
