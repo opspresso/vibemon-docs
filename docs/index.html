@@ -348,7 +348,7 @@ python3 docs/install.py</code></pre>
                         <tr><td><code>vibemon_token</code></td><td>VibeMon API access token (from dashboard)</td><td></td></tr>
                     </tbody>
                 </table>
-                <p>Claude Code's statusline also reads additional <code>show_*</code> display toggles (e.g. <code>show_cost</code>, <code>show_git</code>, <code>show_model</code>, <code>show_tokens</code>) and <code>usage_enabled</code>/<code>usage_refresh_seconds</code> — see <a href="./config.example.json">config.example.json</a> for the full set of defaults.</p>
+                <p>Claude Code's statusline reads a separate <code>~/.vibemon/statusline.json</code> for <code>show_*</code> display toggles (e.g. <code>show_cost</code>, <code>show_git</code>, <code>show_model</code>, <code>show_tokens</code>) and usage-polling settings (<code>usage_enabled</code>, <code>usage_refresh_seconds</code>, <code>token_reset_hours</code>) — see <a href="./vibemon/statusline.example.json">statusline.example.json</a> for the full set of defaults. This file is optional; statusline.py falls back to sensible defaults when it's absent.</p>
 
                 <h3>Codex Configuration</h3>
                 <p>Codex uses the same <code>~/.vibemon/config.json</code> as Claude Code and Kiro. Enable Codex hooks in <code>~/.codex/config.toml</code>:</p>

@@ -42,10 +42,10 @@ def setup_tty_input():
 DOCS_BASE_URL = "https://docs.vibemon.io"
 
 # Shared configuration example file
-CONFIG_EXAMPLE_FILE = "config.example.json"
+CONFIG_EXAMPLE_FILE = "vibemon/config.example.json"
 
 # Claude Code statusline display configuration example file
-STATUSLINE_EXAMPLE_FILE = "statusline.example.json"
+STATUSLINE_EXAMPLE_FILE = "vibemon/statusline.example.json"
 
 # All recognized statusline-only config keys, used to migrate values out of
 # a pre-split single config.json into the new statusline.json.
