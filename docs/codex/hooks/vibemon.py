@@ -100,7 +100,7 @@ CACHE_STALE_SECONDS = 1800
 DESKTOP_LAUNCH_WAIT_SECONDS = 3
 
 # Character configuration
-CHARACTER = "codex"
+CHARACTER = "vibemon"
 
 
 @dataclass(frozen=True)

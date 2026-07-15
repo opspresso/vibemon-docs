@@ -15,7 +15,7 @@
       "character": {
         "type": "string",
         "default": "claw",
-        "description": "Character to display (clawd, codex, kiro, claw)"
+        "description": "Character to display (vibemon, clawd, kiro, claw, daangni)"
       },
       "serialEnabled": {
         "type": "boolean",
@@ -57,7 +57,7 @@
     },
     "character": {
       "label": "Character",
-      "help": "clawd (orange), codex (green), kiro (white), claw (red)"
+      "help": "vibemon (purple), clawd (orange), kiro (white), claw (red), daangni (peach)"
     },
     "serialEnabled": {
       "label": "Serial Output",

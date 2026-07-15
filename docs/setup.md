@@ -74,8 +74,8 @@ Create `~/.vibemon/config.json` (shared by Claude Code, Codex, Kiro, and the Ope
   "auto_launch": true,
   "http_urls": [],
   "serial_port": null,
-  "vibemon_url": "https://vibemon.io",
-  "vibemon_token": "YOUR_TOKEN_HERE"
+  "vibemon_token": "YOUR_TOKEN_HERE",
+  "vibemon_url": "https://vibemon.io"
 }
 ```
 
@@ -495,7 +495,7 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 | Tool | Character | Setup Method |
 |------|-----------|--------------|
 | Claude Code | clawd | install.py or manual |
-| Codex CLI | codex | install.py or manual |
+| Codex CLI | vibemon | install.py or manual |
 | Kiro | kiro | install.py or manual |
 | OpenClaw | claw | install.py or manual |
 

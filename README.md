@@ -7,7 +7,7 @@ VibeMon is a real-time status monitoring system for AI coding assistants. It dis
 | Platform | Character | Description |
 |----------|-----------|-------------|
 | **Claude Code** | clawd | Anthropic's CLI for Claude |
-| **Codex CLI** | codex | OpenAI's CLI for Codex |
+| **Codex CLI** | vibemon | OpenAI's CLI for Codex |
 | **Kiro IDE** | kiro | Amazon's AI coding assistant |
 | **OpenClaw** | claw | Open source AI gateway |
 
@@ -68,8 +68,8 @@ After installation, edit `~/.vibemon/config.json` to configure your targets:
   "auto_launch": true,
   "http_urls": [],
   "serial_port": null,
-  "vibemon_url": "https://vibemon.io",
-  "vibemon_token": ""
+  "vibemon_token": "",
+  "vibemon_url": "https://vibemon.io"
 }
 ```
 
@@ -86,6 +86,8 @@ After installation, edit `~/.vibemon/config.json` to configure your targets:
 Claude Code's statusline reads a separate `~/.vibemon/statusline.json` for display toggles (e.g. `show_cost`, `show_git`, `show_model`, `show_tokens`) and usage-polling settings (`usage_enabled`, `usage_refresh_seconds`, `token_reset_hours`) — see [statusline.example.json](./docs/vibemon/statusline.example.json) for the full set of defaults. This file is optional; statusline.py falls back to sensible defaults (and to any matching keys still in `config.json`) when it's absent.
 
 The Claude Code installer also places a standalone refresher at `~/.vibemon/usage.py`. It fetches plan usage via `claude -p "/usage"` and writes the shared `~/.vibemon/cache/usage.json`, so the Desktop app can run it (`python3 ~/.vibemon/usage.py --max-age 600`) on startup or on a schedule to keep usage data fresh even when no Claude Code session is active.
+
+The reset-countdown fields the hooks attach (`usage5hResetsIn`/`usageWeekResetsIn`) are only populated when an active Claude Code session refreshes the cache through its statusline (the official `rate_limits` path). The `claude -p "/usage"` path used by `usage.py` yields only display strings, so the usage percentages still update but the reset countdown is omitted.
 
 ### Codex Configuration
 
@@ -151,10 +153,7 @@ Electron app with system tray for macOS, Windows, Linux. See [Installation](#ins
 
 Token can be configured via the system tray menu.
 
-| Window Mode | Description |
-|-------------|-------------|
-| `multi` | One window per project (max 5) - Default |
-| `single` | One window with project lock support |
+It shows a single character window with a speech bubble that follows it. The window retargets to whichever project is currently active instead of opening one window per project.
 
 Features: frameless floating window, always on top, system tray integration, snap to screen corners, click to focus terminal (macOS).
 
@@ -255,7 +254,7 @@ curl -X POST https://vibemon.io/api/status \
 |-------|------|-------------|
 | `state` | string | start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required) |
 | `project` | string | Project name (required) |
-| `character` | string | clawd, codex, kiro, or claw (required); daangni also available via manual character config |
+| `character` | string | vibemon (default), clawd, kiro, claw, or daangni (required); daangni is manual selection only (no tool maps to it) |
 | `tool` | string | Tool name (Bash, Read, Edit, etc.) (optional) |
 | `model` | string | Model name (opus, sonnet, etc.) (optional) |
 | `memory` | number | Context window usage 0-100 (optional) |
