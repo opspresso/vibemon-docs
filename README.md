@@ -89,6 +89,8 @@ The Claude Code installer also places a standalone refresher at `~/.vibemon/usag
 
 The reset-countdown fields the hooks attach (`usage5hResetsIn`/`usageWeekResetsIn`) are only populated when an active Claude Code session refreshes the cache through its statusline (the official `rate_limits` path). The `claude -p "/usage"` path used by `usage.py` yields only display strings, so the usage percentages still update but the reset countdown is omitted.
 
+Note that the plan-usage fields (`usage5h`/`usageWeek` and their reset countdowns) are sent by the **Claude Code hook only**, since they come from Claude's plan-usage cache. The Codex and Kiro hooks don't report usage, and OpenClaw reports context-window usage as `memory` instead.
+
 ### Codex Configuration
 
 Codex uses the same `~/.vibemon/config.json` as Claude Code and Kiro. Enable Codex hooks in `~/.codex/config.toml`:
