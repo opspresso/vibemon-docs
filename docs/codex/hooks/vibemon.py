@@ -550,7 +550,7 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
 
         with urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
             debug_log(f"VibeMon API response: {response.status}")
-            return response.status == 200
+            return 200 <= response.status < 300
     except (URLError, TimeoutError, OSError) as e:
         debug_log(f"VibeMon API error: {e}")
         return False

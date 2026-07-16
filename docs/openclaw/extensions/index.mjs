@@ -150,7 +150,11 @@ function resolveConfig() {
       : sharedHttpUrls.length > 0
         ? sharedHttpUrls
         : DEFAULT_CONFIG.httpUrls,
-    autoLaunch: pluginConfig.autoLaunch ?? DEFAULT_CONFIG.autoLaunch,
+    autoLaunch: typeof pluginConfig.autoLaunch === "boolean"
+      ? pluginConfig.autoLaunch
+      : typeof sharedConfig.auto_launch === "boolean"
+        ? sharedConfig.auto_launch
+        : DEFAULT_CONFIG.autoLaunch,
     debug: pluginConfig.debug ?? DEFAULT_CONFIG.debug,
     vibemonUrl: firstNonEmpty(
       pluginConfig.vibemonUrl,
@@ -448,9 +452,10 @@ async function sendVibeMonApi(payload) {
     return false;
   }
 
-  // Build API URL (strip trailing slash)
+  // Build API URL (strip trailing slash) — /api/status, matching the
+  // Python bridges (the cloud's bare /status only works via a rewrite)
   const baseUrl = config.vibemonUrl.replace(/\/+$/, "");
-  const apiUrl = `${baseUrl}/status`;
+  const apiUrl = `${baseUrl}/api/status`;
 
   const apiPayload = {
     state: payload.state || "",

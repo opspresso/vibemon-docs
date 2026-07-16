@@ -503,7 +503,7 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
 
         with urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
             debug_log(f"VibeMon API response: {response.status}")
-            return response.status == 200
+            return 200 <= response.status < 300
     except (URLError, TimeoutError, OSError) as e:
         debug_log(f"VibeMon API error: {e}")
         return False
@@ -872,19 +872,24 @@ def handle_command(cmd: str, args: list[str]) -> bool | None:
 def main() -> None:
     """Main entry point."""
     # Check for command modes
+    argv_event = ""
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
         args = sys.argv[2:]
         result = handle_command(cmd, args)
         if result is not None:
             sys.exit(0 if result else 1)
+        # Not a command: Kiro hook registrations pass the event name as the
+        # first argument (e.g. `vibemon.py promptSubmit`) — keep it as a
+        # fallback for when stdin carries no hook_event_name.
+        argv_event = cmd
 
     # Read and parse input once
     input_raw = read_input()
     data = parse_json(input_raw)
 
     # Extract fields from parsed data
-    event_name = data.get("hook_event_name", "Unknown")
+    event_name = data.get("hook_event_name", "") or argv_event or "Unknown"
     tool_name = data.get("tool_name", "")
     cwd = data.get("cwd", "")
     transcript_path = data.get("transcript_path", "")
@@ -898,7 +903,10 @@ def main() -> None:
     payload = build_payload(state, tool_name, project_name)
     debug_log(f"Payload: {json.dumps(payload)}")
 
-    is_start = event_name == "promptSubmit"
+    # agentSpawn is the session-start event (maps to the "start" state) —
+    # auto-launch is anchored to it, matching the Claude/Codex bridges'
+    # SessionStart behavior.
+    is_start = event_name == "agentSpawn"
     send_to_all(payload, is_start)
 
 
