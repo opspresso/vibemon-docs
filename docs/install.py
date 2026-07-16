@@ -446,8 +446,9 @@ def install_vibemon_shared(source: FileSource) -> bool:
     """Install shared ~/.vibemon assets once per run, for every platform.
 
     usage.py is the standalone plan-usage cache refresher run by the Desktop
-    app on startup or on a schedule; it belongs to every installation, not
-    just Claude Code's.
+    app on startup or on a schedule; vibemon_core.py is the shared transport
+    module imported by every per-tool hook. Both belong to every
+    installation, not just Claude Code's.
     """
     if "shared_installed" in VIBEMON_CONFIG_CACHE:
         return VIBEMON_CONFIG_CACHE["shared_installed"]
@@ -455,6 +456,11 @@ def install_vibemon_shared(source: FileSource) -> bool:
     # usage.py -> ~/.vibemon/usage.py
     content = source.get_file("vibemon/usage.py")
     ok = write_file_with_diff(Path.home() / ".vibemon" / "usage.py", content, "~/.vibemon/usage.py", executable=True)
+
+    # vibemon_core.py -> ~/.vibemon/vibemon_core.py
+    content = source.get_file("vibemon/vibemon_core.py")
+    ok = write_file_with_diff(Path.home() / ".vibemon" / "vibemon_core.py", content, "~/.vibemon/vibemon_core.py") and ok
+
     VIBEMON_CONFIG_CACHE["shared_installed"] = ok
     return ok
 

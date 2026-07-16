@@ -83,9 +83,10 @@ Create `~/.vibemon/config.json` (shared by Claude Code, Codex, Kiro, and the Ope
 
 Download hook files:
 ```bash
-mkdir -p ~/.claude/hooks
+mkdir -p ~/.claude/hooks ~/.vibemon
 curl -o ~/.claude/hooks/vibemon.py https://docs.vibemon.io/claude/hooks/vibemon.py
 curl -o ~/.claude/statusline.py https://docs.vibemon.io/claude/statusline.py
+curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
 chmod +x ~/.claude/hooks/vibemon.py ~/.claude/statusline.py
 ```
 
@@ -223,8 +224,9 @@ Optionally, create `~/.vibemon/statusline.json` to customize the statusline's di
 
 Download hook files:
 ```bash
-mkdir -p ~/.codex/hooks
+mkdir -p ~/.codex/hooks ~/.vibemon
 curl -o ~/.codex/hooks/vibemon.py https://docs.vibemon.io/codex/hooks/vibemon.py
+curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
 chmod +x ~/.codex/hooks/vibemon.py
 ```
 
@@ -368,8 +370,9 @@ Merge the following into your existing `~/.codex/hooks.json`:
 
 Download hook files:
 ```bash
-mkdir -p ~/.kiro/hooks ~/.kiro/agents
+mkdir -p ~/.kiro/hooks ~/.kiro/agents ~/.vibemon
 curl -o ~/.kiro/hooks/vibemon.py https://docs.vibemon.io/kiro/hooks/vibemon.py
+curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
 curl -o ~/.kiro/hooks/vibemon-prompt-submit.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-prompt-submit.kiro.hook
 curl -o ~/.kiro/hooks/vibemon-agent-stop.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-agent-stop.kiro.hook
 curl -o ~/.kiro/hooks/vibemon-file-created.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-file-created.kiro.hook
