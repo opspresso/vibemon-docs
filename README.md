@@ -260,8 +260,8 @@ curl -X POST https://vibemon.io/api/status \
 | `tool` | string | Tool name (Bash, Read, Edit, etc.) (optional) |
 | `model` | string | Model name (opus, sonnet, etc.) (optional) |
 | `memory` | number | Context window usage 0-100 (optional) |
-| `usage5h` / `usageWeek` | number | Plan-usage percentage 0-100 (optional; Claude Code and Codex hooks only — see below) |
-| `usage5hResetsIn` / `usageWeekResetsIn` | number | Minutes until the usage window resets (optional; see below) |
+| `usage5h` / `usageWeek` | number | Plan-usage percentage 0-100 (optional; Claude Code and Codex hooks only — see above) |
+| `usage5hResetsIn` / `usageWeekResetsIn` | number | Minutes until the usage window resets (optional; see above) |
 
 ```bash
 # Delete agent status
