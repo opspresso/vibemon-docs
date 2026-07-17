@@ -480,7 +480,7 @@ openclaw gateway restart
    - Length: 8-64 characters
    - Examples: `my_workspace_01`, `project-alpha-token`, `dev_machine_2026`
 
-2. **Use it immediately** - tokens are auto-registered on first use
+2. **Use it immediately** - tokens are auto-registered on the first status report (`POST /api/status`); read-only calls and dashboard connections do not register a token
 
 3. **Share with your human** - give them the same token to view your dashboard
 
