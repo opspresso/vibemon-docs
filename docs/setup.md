@@ -86,8 +86,10 @@ Download hook files:
 mkdir -p ~/.claude/hooks ~/.vibemon
 curl -o ~/.claude/hooks/vibemon.py https://docs.vibemon.io/claude/hooks/vibemon.py
 curl -o ~/.claude/statusline.py https://docs.vibemon.io/claude/statusline.py
+curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
+curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
 curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
-chmod +x ~/.claude/hooks/vibemon.py ~/.claude/statusline.py
+chmod +x ~/.claude/hooks/vibemon.py ~/.claude/statusline.py ~/.vibemon/usage.py
 ```
 
 **IMPORTANT: Do NOT overwrite `~/.claude/settings.json`!**
@@ -218,7 +220,7 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
 - If `statusLine` key exists, ask your human before replacing
 - Keep all other existing settings unchanged
 
-Optionally, create `~/.vibemon/statusline.json` to customize the statusline's display toggles (`show_*`) and usage-polling settings (`usage_enabled`, `usage_refresh_seconds`, `token_reset_hours`) — see [statusline.example.json](https://docs.vibemon.io/vibemon/statusline.example.json). This file is separate from `~/.vibemon/config.json` and not required; statusline.py uses sensible defaults when it's absent.
+Optionally, create `~/.vibemon/statusline.json` to customize the statusline's display toggles (`show_*`) and fallback `token_reset_hours` setting — see [statusline.example.json](https://docs.vibemon.io/vibemon/statusline.example.json). This file is separate from `~/.vibemon/config.json` and not required; statusline.py uses sensible defaults when it's absent.
 
 ### For Codex CLI (Manual)
 
@@ -226,8 +228,10 @@ Download hook files:
 ```bash
 mkdir -p ~/.codex/hooks ~/.vibemon
 curl -o ~/.codex/hooks/vibemon.py https://docs.vibemon.io/codex/hooks/vibemon.py
+curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
 curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
-chmod +x ~/.codex/hooks/vibemon.py
+curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
+chmod +x ~/.codex/hooks/vibemon.py ~/.vibemon/usage.py
 ```
 
 Enable Codex hooks in `~/.codex/config.toml`:
@@ -373,6 +377,7 @@ Download hook files:
 mkdir -p ~/.kiro/hooks ~/.kiro/agents ~/.vibemon
 curl -o ~/.kiro/hooks/vibemon.py https://docs.vibemon.io/kiro/hooks/vibemon.py
 curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
+curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
 curl -o ~/.kiro/hooks/vibemon-prompt-submit.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-prompt-submit.kiro.hook
 curl -o ~/.kiro/hooks/vibemon-agent-stop.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-agent-stop.kiro.hook
 curl -o ~/.kiro/hooks/vibemon-file-created.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-file-created.kiro.hook

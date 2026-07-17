@@ -33,14 +33,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
 from typing import Any
+
+from usage_cache import (
+    apply_session_floor,
+    load_usage_cache as _load_usage_cache,
+    normalize_percent,
+    parse_epoch,
+    parse_usage_output,
+    provider_updated_at,
+    save_usage_cache as _save_usage_cache,
+)
 
 try:
     import fcntl
@@ -86,30 +94,6 @@ def get_usage_cache_path() -> str:
 # ============================================================================
 # Live Usage via Anthropic OAuth API (works without an active session)
 # ============================================================================
-
-
-def _parse_epoch(value: Any) -> float | None:
-    """Parse a resets_at value into a Unix epoch timestamp.
-
-    Accepts either a numeric epoch (int/float/numeric string) or an
-    ISO-8601 timestamp string (e.g. "2026-07-12T17:00:00Z"). Returns None
-    if the value is missing or unparseable.
-    """
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        pass
-    if isinstance(value, str):
-        text = value.strip()
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        try:
-            return datetime.fromisoformat(text).timestamp()
-        except ValueError:
-            return None
-    return None
 
 
 def read_claude_token() -> str | None:
@@ -175,11 +159,13 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
         if not isinstance(bucket, dict):
             return None
         try:
-            pct = round(float(bucket.get("utilization")))
+            pct = normalize_percent(bucket.get("utilization"))
         except (TypeError, ValueError):
             return None
+        if pct is None:
+            return None
         entry: dict[str, Any] = {"pct": pct}
-        resets_at = _parse_epoch(bucket.get("resets_at"))
+        resets_at = parse_epoch(bucket.get("resets_at"))
         if resets_at is not None:
             entry["resets_at"] = resets_at
         return entry
@@ -256,11 +242,13 @@ def fetch_codex_usage_live() -> dict[str, Any] | None:
         if not isinstance(bucket, dict):
             return None
         try:
-            pct = round(float(bucket.get("used_percent")))
+            pct = normalize_percent(bucket.get("used_percent"))
         except (TypeError, ValueError):
             return None
+        if pct is None:
+            return None
         entry: dict[str, Any] = {"pct": pct}
-        resets_at = _parse_epoch(bucket.get("reset_at"))
+        resets_at = parse_epoch(bucket.get("reset_at"))
         if resets_at is not None:
             entry["resets_at"] = resets_at
         return entry
@@ -318,11 +306,13 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
         if not isinstance(bucket, dict):
             return None
         try:
-            pct = round(float(bucket.get("used_percent")))
+            pct = normalize_percent(bucket.get("used_percent"))
         except (TypeError, ValueError):
             return None
+        if pct is None:
+            return None
         entry: dict[str, Any] = {"pct": pct}
-        resets_at = _parse_epoch(bucket.get("resets_at"))
+        resets_at = parse_epoch(bucket.get("resets_at"))
         if resets_at is not None:
             entry["resets_at"] = resets_at
         return entry
@@ -359,134 +349,18 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
 
 
 # ============================================================================
-# `claude -p "/usage"` Text-Parsing Fallback (mirrors ~/.claude/statusline.py)
-# ============================================================================
-
-
-def parse_usage_output(text: str) -> dict[str, Any]:
-    """Parse `claude -p "/usage"` output into a usage dict.
-
-    Matches lines by keyword so format tweaks degrade gracefully:
-
-        Current session: 36% used · resets Jun 12 at 3:20pm (Asia/Seoul)
-        Current week (all models): 37% used · resets ...
-        Current week (Sonnet only): 0% used
-
-    Returns {} if nothing parseable is found.
-    """
-    result: dict[str, Any] = {}
-    if not text:
-        return result
-
-    def _pct(line: str) -> int | None:
-        m = re.search(r"(\d+)%\s+used", line)
-        return int(m.group(1)) if m else None
-
-    def _resets(line: str) -> str:
-        m = re.search(r"resets\s+(.+?)\s*$", line)
-        return m.group(1).strip() if m else ""
-
-    for raw in text.splitlines():
-        line = raw.strip()
-        low = line.lower()
-        if "current session:" in low:
-            pct = _pct(line)
-            if pct is not None:
-                entry: dict[str, Any] = {"pct": pct}
-                resets = _resets(line)
-                if resets:
-                    entry["resets"] = resets
-                result["session"] = entry
-        elif "current week (all models):" in low:
-            pct = _pct(line)
-            if pct is not None:
-                entry = {"pct": pct}
-                resets = _resets(line)
-                if resets:
-                    entry["resets"] = resets
-                result["week_all"] = entry
-        elif "current week (sonnet only):" in low:
-            pct = _pct(line)
-            if pct is not None:
-                result["week_sonnet"] = {"pct": pct}
-
-    return result
-
-
-def apply_session_floor(usage: dict[str, Any]) -> dict[str, Any]:
-    """Floor the 5-hour session pct to 1 when the weekly window has usage but
-    the session reads 0 (typical right after a session reset), so its bar
-    stays visible alongside the weekly bar instead of being hidden.
-    """
-    session = usage.get("session")
-    week = usage.get("week_all")
-    if (
-        isinstance(week, dict)
-        and isinstance(week.get("pct"), int)
-        and week["pct"] >= 1
-        and isinstance(session, dict)
-        and session.get("pct") == 0
-    ):
-        return {**usage, "session": {**session, "pct": 1}}
-    return usage
-
-
-# ============================================================================
 # Cache I/O (same lock protocol as ~/.claude/statusline.py)
 # ============================================================================
 
 
 def load_usage_cache() -> dict[str, Any] | None:
     """Load cached plan usage, or None if missing/unreadable."""
-    try:
-        with open(get_usage_cache_path()) as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else None
-    except (FileNotFoundError, json.JSONDecodeError, IOError):
-        return None
+    return _load_usage_cache(get_usage_cache_path())
 
 
 def save_usage_cache(usage: dict[str, Any]) -> None:
-    """Atomically write the usage cache, merged with whatever's already there
-    (stamps a fresh `ts`).
-
-    Merging (rather than overwriting) matters because Claude and Codex usage
-    are refreshed independently — writing one provider's entry must not wipe
-    out the other's, whether that other entry came from this script or from
-    statusline.py's own writes to the same file.
-
-    A single non-blocking lock attempt: losing an occasional write to a
-    concurrent statusline render is harmless since the data is equivalent.
-    """
-    cache_path = get_usage_cache_path()
-    lock_fd = None
-    try:
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-
-        if fcntl is not None:
-            lockfile = f"{cache_path}.lock"
-            lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
-                return  # Another writer holds it; its data is just as fresh
-        existing = load_usage_cache()
-        payload = dict(existing) if isinstance(existing, dict) else {}
-        payload.update(usage)
-        payload["ts"] = int(time.time())
-        tmpfile = f"{cache_path}.tmp.{os.getpid()}"
-        with open(tmpfile, "w") as f:
-            json.dump(payload, f)
-        os.replace(tmpfile, cache_path)
-    except (IOError, OSError):
-        pass
-    finally:
-        if lock_fd is not None:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
-            except OSError:
-                pass
+    """Merge provider updates and stamp each provider independently."""
+    _save_usage_cache(get_usage_cache_path(), usage)
 
 
 def refresh_usage() -> str:
@@ -572,12 +446,13 @@ def main() -> int:
 
     cache = load_usage_cache()
     if args.max_age > 0 and isinstance(cache, dict):
-        try:
-            if (time.time() - float(cache.get("ts", 0))) <= args.max_age:
-                print(json.dumps(cache))
-                return 0
-        except (TypeError, ValueError):
-            pass
+        providers = [name for name in ("claude", "codex") if isinstance(cache.get(name), dict)]
+        if providers and all(
+            time.time() - provider_updated_at(cache, name) <= args.max_age
+            for name in providers
+        ):
+            print(json.dumps(cache))
+            return 0
 
     outcome = refresh_usage()
     if outcome == "failed":

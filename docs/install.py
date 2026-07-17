@@ -50,7 +50,7 @@ STATUSLINE_EXAMPLE_FILE = "vibemon/statusline.example.json"
 # All recognized statusline-only config keys, used to migrate values out of
 # a pre-split single config.json into the new statusline.json.
 STATUSLINE_KEYS = frozenset({
-    "token_reset_hours", "usage_enabled", "usage_refresh_seconds",
+    "token_reset_hours",
     "show_project", "show_git", "show_model", "show_tokens", "show_cost",
     "show_duration", "show_lines", "show_memory", "show_usage",
     "show_usage_reset", "show_version", "show_statusline",
@@ -446,8 +446,9 @@ def install_vibemon_shared(source: FileSource) -> bool:
     """Install shared ~/.vibemon assets once per run, for every platform.
 
     usage.py is the standalone plan-usage cache refresher run by the Desktop
-    app on startup or on a schedule; vibemon_core.py is the shared transport
-    module imported by every per-tool hook. Both belong to every
+    app on startup or on a schedule; usage_cache.py owns the shared parsing
+    and provider-freshness cache contract; vibemon_core.py is the shared
+    transport module imported by every per-tool hook. All belong to every
     installation, not just Claude Code's.
     """
     if "shared_installed" in VIBEMON_CONFIG_CACHE:
@@ -456,6 +457,10 @@ def install_vibemon_shared(source: FileSource) -> bool:
     # usage.py -> ~/.vibemon/usage.py
     content = source.get_file("vibemon/usage.py")
     ok = write_file_with_diff(Path.home() / ".vibemon" / "usage.py", content, "~/.vibemon/usage.py", executable=True)
+
+    # usage_cache.py -> ~/.vibemon/usage_cache.py
+    content = source.get_file("vibemon/usage_cache.py")
+    ok = write_file_with_diff(Path.home() / ".vibemon" / "usage_cache.py", content, "~/.vibemon/usage_cache.py") and ok
 
     # vibemon_core.py -> ~/.vibemon/vibemon_core.py
     content = source.get_file("vibemon/vibemon_core.py")

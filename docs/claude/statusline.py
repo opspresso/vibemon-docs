@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -17,10 +16,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-try:
-    import fcntl
-except ImportError:  # Windows
-    fcntl = None
+VIBEMON_HOME = Path.home() / ".vibemon"
+if str(VIBEMON_HOME) not in sys.path:
+    sys.path.insert(0, str(VIBEMON_HOME))
+
+from usage_cache import (  # noqa: E402
+    apply_session_floor,
+    load_usage_cache as _load_usage_cache,
+    save_usage_cache as _save_usage_cache,
+    usage_from_rate_limits,
+)
 
 # ============================================================================
 # Configuration Loading
@@ -57,8 +62,6 @@ def load_config() -> None:
     # Map statusline-only config keys to environment variables
     key_mapping = {
         "token_reset_hours": ("VIBEMON_TOKEN_RESET_HOURS", str),
-        "usage_enabled": ("VIBEMON_USAGE_ENABLED", lambda v: "1" if v else "0"),
-        "usage_refresh_seconds": ("VIBEMON_USAGE_REFRESH", str),
         "show_project": ("VIBEMON_SHOW_PROJECT", lambda v: "1" if v else "0"),
         "show_git": ("VIBEMON_SHOW_GIT", lambda v: "1" if v else "0"),
         "show_model": ("VIBEMON_SHOW_MODEL", lambda v: "1" if v else "0"),
@@ -102,12 +105,6 @@ def _env_int(env_key: str, default: int) -> int:
 # Token reset window: 5h for Pro/Max, 0 to disable (Enterprise)
 TOKEN_RESET_HOURS = _env_int("VIBEMON_TOKEN_RESET_HOURS", 5)
 TOKEN_RESET_MS = TOKEN_RESET_HOURS * 3600 * 1000
-
-# Plan usage (`claude -p "/usage"`): poll in the background at most this often,
-# since the call is slow and not free. Set usage_enabled=false to disable.
-USAGE_ENABLED = os.environ.get("VIBEMON_USAGE_ENABLED", "1") != "0"
-USAGE_REFRESH_SECONDS = _env_int("VIBEMON_USAGE_REFRESH", 600)
-
 
 def _show_flag(env_key: str, default: bool) -> bool:
     """Resolve a statusline segment toggle from env (backed by config show_*)."""
@@ -688,70 +685,8 @@ def build_progress_bar(percent_str: str | int | float, width: int = 10) -> str:
 
 
 # ============================================================================
-# Plan Usage Functions (claude -p "/usage")
+# Plan Usage Functions
 # ============================================================================
-
-
-def _parse_epoch(value: Any) -> float | None:
-    """Parse a resets_at value into a Unix epoch timestamp.
-
-    Accepts either a numeric epoch (int/float/numeric string) or an
-    ISO-8601 timestamp string (e.g. "2026-07-12T17:00:00Z"). Returns None
-    if the value is missing or unparseable.
-    """
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        pass
-    if isinstance(value, str):
-        text = value.strip()
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        try:
-            return datetime.fromisoformat(text).timestamp()
-        except ValueError:
-            return None
-    return None
-
-
-def usage_from_rate_limits(data: dict[str, Any]) -> dict[str, Any] | None:
-    """Build a usage-cache-shaped dict from the statusline payload's official
-    `rate_limits` field (Claude Code >= v2.1.80), avoiding a `claude -p
-    "/usage"` subprocess call entirely. Returns None when the field is absent
-    (older Claude Code versions), so callers can fall back to the subprocess
-    cache.
-    """
-    rate_limits = data.get("rate_limits")
-    if not isinstance(rate_limits, dict):
-        return None
-
-    def _entry(bucket: Any) -> dict[str, Any] | None:
-        if not isinstance(bucket, dict):
-            return None
-        try:
-            pct = int(float(bucket.get("used_percentage")))
-        except (TypeError, ValueError):
-            return None
-        entry: dict[str, Any] = {"pct": pct}
-        resets_at = _parse_epoch(bucket.get("resets_at"))
-        if resets_at is not None:
-            entry["resets_at"] = resets_at
-        return entry
-
-    session = _entry(rate_limits.get("five_hour"))
-    week = _entry(rate_limits.get("seven_day"))
-    if session is None and week is None:
-        return None
-
-    result: dict[str, Any] = {}
-    if session is not None:
-        result["session"] = session
-    if week is not None:
-        result["week_all"] = week
-    return result
-
 
 def get_usage_cache_path() -> str:
     """Get the plan-usage cache file path (next to the statusline cache)."""
@@ -761,202 +696,12 @@ def get_usage_cache_path() -> str:
 
 def load_usage_cache() -> dict[str, Any] | None:
     """Load cached plan usage, or None if missing/unreadable."""
-    try:
-        with open(get_usage_cache_path()) as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else None
-    except (FileNotFoundError, json.JSONDecodeError, IOError):
-        return None
-
-
-def parse_usage_output(text: str) -> dict[str, Any]:
-    """Parse `claude -p "/usage"` output into a usage dict.
-
-    Matches lines by keyword so format tweaks degrade gracefully:
-
-        Current session: 36% used · resets Jun 12 at 3:20pm (Asia/Seoul)
-        Current week (all models): 37% used · resets ...
-        Current week (Sonnet only): 0% used
-
-    Returns {} if nothing parseable is found.
-    """
-    result: dict[str, Any] = {}
-    if not text:
-        return result
-
-    def _pct(line: str) -> int | None:
-        m = re.search(r"(\d+)%\s+used", line)
-        return int(m.group(1)) if m else None
-
-    def _resets(line: str) -> str:
-        m = re.search(r"resets\s+(.+?)\s*$", line)
-        return m.group(1).strip() if m else ""
-
-    for raw in text.splitlines():
-        line = raw.strip()
-        low = line.lower()
-        if "current session:" in low:
-            pct = _pct(line)
-            if pct is not None:
-                entry: dict[str, Any] = {"pct": pct}
-                resets = _resets(line)
-                if resets:
-                    entry["resets"] = resets
-                result["session"] = entry
-        elif "current week (all models):" in low:
-            pct = _pct(line)
-            if pct is not None:
-                entry = {"pct": pct}
-                resets = _resets(line)
-                if resets:
-                    entry["resets"] = resets
-                result["week_all"] = entry
-        elif "current week (sonnet only):" in low:
-            pct = _pct(line)
-            if pct is not None:
-                result["week_sonnet"] = {"pct": pct}
-
-    return result
-
-
-def apply_session_floor(usage: dict[str, Any]) -> dict[str, Any]:
-    """Floor the 5-hour session pct to 1 when the weekly window has usage but
-    the session reads 0 (typical right after a session reset), so its bar
-    stays visible alongside the weekly bar instead of being hidden.
-    """
-    session = usage.get("session")
-    week = usage.get("week_all")
-    if (
-        isinstance(week, dict)
-        and isinstance(week.get("pct"), int)
-        and week["pct"] >= 1
-        and isinstance(session, dict)
-        and session.get("pct") == 0
-    ):
-        return {**usage, "session": {**session, "pct": 1}}
-    return usage
+    return _load_usage_cache(get_usage_cache_path())
 
 
 def save_usage_cache(usage: dict[str, Any]) -> None:
-    """Atomically write the usage cache, merged with whatever's already there
-    (stamps a fresh `ts`).
-
-    Merging (rather than overwriting) matters because Claude and Codex usage
-    are refreshed independently — writing Claude's entry from here must not
-    wipe out a "codex" entry usage.py wrote to the same file, and vice versa.
-
-    Takes a single non-blocking lock attempt (unlike save_to_cache's
-    retry-with-timeout loop) because this is called synchronously from
-    statusline main() on the direct rate_limits path — every render, not in
-    a backgrounded child. Retrying for up to LOCK_TIMEOUT_SECONDS here would
-    stall the status line itself under concurrent-session contention; losing
-    an occasional write is harmless since the next render just writes again.
-    """
-    cache_path = get_usage_cache_path()
-    lock_fd = None
-    try:
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-
-        if fcntl is not None:
-            lockfile = f"{cache_path}.lock"
-            lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
-                return  # Another writer holds it; skip, next render retries
-
-        existing = load_usage_cache()
-        payload = dict(existing) if isinstance(existing, dict) else {}
-        payload.update(usage)
-        payload["ts"] = int(time.time())
-        tmpfile = f"{cache_path}.tmp.{os.getpid()}"
-        with open(tmpfile, "w") as f:
-            json.dump(payload, f)
-        os.replace(tmpfile, cache_path)
-    except (IOError, OSError):
-        pass
-    finally:
-        if lock_fd is not None:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
-            except OSError:
-                pass
-
-
-def refresh_usage() -> None:
-    """Fetch `claude -p "/usage"` and refresh the cache (runs in a child proc).
-
-    A non-blocking lock ensures only one refresh runs at a time; concurrent
-    callers exit immediately instead of spawning duplicate `claude` processes.
-    This subprocess-guard lock is released before writing the cache, since
-    save_usage_cache() acquires its own lock on the same file for the write
-    itself — holding both at once would deadlock against ourselves.
-    """
-    lockfile = f"{get_usage_cache_path()}.lock"
-    lock_fd = None
-    usage: dict[str, Any] = {}
-    try:
-        os.makedirs(os.path.dirname(lockfile), exist_ok=True)
-        if fcntl is not None:
-            lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
-                return  # Another refresh is in flight
-
-        try:
-            result = subprocess.run(
-                ["claude", "-p", "/usage"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            return
-
-        usage = parse_usage_output(result.stdout)
-    finally:
-        if lock_fd is not None:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
-            except OSError:
-                pass
-
-    if usage:
-        save_usage_cache({"claude": apply_session_floor(usage)})
-
-
-def maybe_refresh_usage_background(cache: dict[str, Any] | None) -> None:
-    """Spawn a background refresh when the usage cache is missing or stale."""
-    if not USAGE_ENABLED:
-        return
-    if shutil.which("claude") is None:
-        return
-
-    ts = cache.get("ts", 0) if isinstance(cache, dict) else 0
-    try:
-        is_stale = (time.time() - float(ts)) > USAGE_REFRESH_SECONDS
-    except (ValueError, TypeError):
-        is_stale = True
-    if not is_stale:
-        return
-
-    # Fork so the slow `claude -p` call never blocks the status line.
-    if not hasattr(os, "fork"):
-        return  # No safe non-blocking path; skip rather than stall rendering
-    try:
-        pid = os.fork()
-        if pid == 0:
-            detach_stdio()
-            try:
-                refresh_usage()
-            except Exception:
-                pass
-            os._exit(0)
-    except OSError:
-        pass
+    """Merge provider updates and stamp each provider independently."""
+    _save_usage_cache(get_usage_cache_path(), usage)
 
 
 def build_usage_segment(cache: dict[str, Any] | None) -> str:
@@ -1261,7 +1006,6 @@ def main() -> None:
         save_usage_cache({"claude": usage_cache})
     else:
         raw_cache = load_usage_cache()
-        maybe_refresh_usage_background(raw_cache)
         usage_cache = raw_cache.get("claude") if isinstance(raw_cache, dict) else None
     usage_segment = build_usage_segment(usage_cache)
 

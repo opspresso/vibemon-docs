@@ -25,6 +25,8 @@ from typing import Any, Callable
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from usage_cache import get_fresh_provider, load_usage_cache
+
 try:
     import fcntl
 except ImportError:  # Windows
@@ -95,8 +97,8 @@ SERIAL_BAUD_RATE = "115200"
 HTTP_TIMEOUT_SECONDS = 5
 
 # Cache configuration: entries older than this are treated as unknown rather
-# than sent as-is, since statusline.py (the only writer) may not have run
-# recently for this project/session and the value could be misleadingly stale.
+# than sent as-is. Usage freshness is evaluated per provider; project metadata
+# continues to use its own entry timestamps.
 CACHE_STALE_SECONDS = 1800
 
 # Desktop launch configuration
@@ -294,24 +296,11 @@ def _resets_in_minutes(entry: dict[str, Any]) -> int | None:
     return max(0, round((resets_at - time.time()) / 60))
 
 
-def _load_fresh_usage_cache() -> dict[str, Any] | None:
-    """Load ~/.vibemon/cache/usage.json, or None if missing/unreadable/stale."""
+def _load_usage_provider(provider: str) -> dict[str, Any] | None:
+    """Load one provider only when that provider's usage is fresh."""
     config = get_config()
     usage_path = os.path.join(os.path.dirname(config.cache_path), "usage.json")
-
-    try:
-        with open(usage_path) as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, IOError):
-        return None
-
-    try:
-        if (time.time() - float(data.get("ts", 0))) > CACHE_STALE_SECONDS:
-            return None
-    except (TypeError, ValueError):
-        return None
-
-    return data
+    return get_fresh_provider(load_usage_cache(usage_path), provider, CACHE_STALE_SECONDS)
 
 
 def _usage_fields(bucket_data: dict[str, Any] | None) -> dict[str, Any]:
@@ -350,10 +339,7 @@ def get_usage_metadata() -> dict[str, Any]:
     usageWeek, usage5hResetsIn, usageWeekResetsIn} for the 5-hour session
     window and the weekly (all-models) window.
     """
-    data = _load_fresh_usage_cache()
-    if data is None:
-        return {}
-    return _usage_fields(data.get("claude"))
+    return _usage_fields(_load_usage_provider("claude"))
 
 
 def get_codex_usage_metadata() -> dict[str, Any]:
@@ -363,10 +349,7 @@ def get_codex_usage_metadata() -> dict[str, Any]:
     "codex" key that usage.py populates from Codex CLI's account-level usage
     API (or its local session log as a fallback).
     """
-    data = _load_fresh_usage_cache()
-    if data is None:
-        return {}
-    return _usage_fields(data.get("codex"))
+    return _usage_fields(_load_usage_provider("codex"))
 
 
 def get_terminal_id() -> str:

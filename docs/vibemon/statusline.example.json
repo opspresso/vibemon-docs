@@ -2,6 +2,5 @@
   "show_cost": true,
   "show_duration": false,
   "show_lines": true,
-  "show_tokens": true,
-  "usage_refresh_seconds": 600
+  "show_tokens": true
 }
