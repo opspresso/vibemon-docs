@@ -44,6 +44,12 @@ curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_wo
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --all
 ```
 
+**Skip confirmation prompts (CI/agents):**
+```bash
+curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
+```
+`-y`/`--yes` auto-approves prompts (e.g. overwriting existing files); it doesn't select a platform by itself, so combine it with a platform flag or `--all`.
+
 The script will:
 1. Download and install the necessary hook files
 2. Merge hooks into existing config files (preserves your settings)
@@ -378,12 +384,13 @@ mkdir -p ~/.kiro/hooks ~/.kiro/agents ~/.vibemon
 curl -o ~/.kiro/hooks/vibemon.py https://docs.vibemon.io/kiro/hooks/vibemon.py
 curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
 curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
+curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
 curl -o ~/.kiro/hooks/vibemon-prompt-submit.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-prompt-submit.kiro.hook
 curl -o ~/.kiro/hooks/vibemon-agent-stop.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-agent-stop.kiro.hook
 curl -o ~/.kiro/hooks/vibemon-file-created.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-file-created.kiro.hook
 curl -o ~/.kiro/hooks/vibemon-file-edited.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-file-edited.kiro.hook
 curl -o ~/.kiro/hooks/vibemon-file-deleted.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-file-deleted.kiro.hook
-chmod +x ~/.kiro/hooks/vibemon.py
+chmod +x ~/.kiro/hooks/vibemon.py ~/.vibemon/usage.py
 ```
 
 **IMPORTANT: Do NOT overwrite `~/.kiro/agents/default.json`!**
@@ -422,9 +429,13 @@ kiro-cli --agent default
 
 Download plugin files:
 ```bash
-mkdir -p ~/.openclaw/extensions/vibemon-bridge
+mkdir -p ~/.openclaw/extensions/vibemon-bridge ~/.vibemon
 curl -o ~/.openclaw/extensions/vibemon-bridge/openclaw.plugin.json https://docs.vibemon.io/openclaw/extensions/openclaw.plugin.json
 curl -o ~/.openclaw/extensions/vibemon-bridge/index.mjs https://docs.vibemon.io/openclaw/extensions/index.mjs
+curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
+curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
+curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
+chmod +x ~/.vibemon/usage.py
 ```
 
 **IMPORTANT: Do NOT overwrite `~/.openclaw/openclaw.json`!**

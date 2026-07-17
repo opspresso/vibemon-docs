@@ -39,6 +39,7 @@ For headless setups where a GUI app isn't available:
 ```bash
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_token
 # --codex / --kiro / --openclaw for other tools, --all for every detected tool
+# -y/--yes auto-approves prompts (combine with a platform flag)
 ```
 
 Interactive prompt version:
