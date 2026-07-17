@@ -699,9 +699,9 @@ def load_usage_cache() -> dict[str, Any] | None:
     return _load_usage_cache(get_usage_cache_path())
 
 
-def save_usage_cache(usage: dict[str, Any]) -> None:
+def save_usage_cache(usage: dict[str, Any]) -> bool:
     """Merge provider updates and stamp each provider independently."""
-    _save_usage_cache(get_usage_cache_path(), usage)
+    return _save_usage_cache(get_usage_cache_path(), usage)
 
 
 def build_usage_segment(cache: dict[str, Any] | None) -> str:

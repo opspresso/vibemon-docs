@@ -17,8 +17,8 @@ session log.
 
 Intended to be run by the VibeMon Desktop app on startup or on a schedule, so
 usage data stays fresh even when no Claude Code session is rendering the
-statusline. Uses the same lock protocol as statusline.py, so concurrent
-refreshes from either side never collide.
+statusline. Refreshes are serialized separately from the short cache-write
+lock shared with statusline.py, so network I/O never blocks statusline writes.
 
 Usage:
   python3 ~/.vibemon/usage.py                 # refresh now
@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -42,11 +43,11 @@ from typing import Any
 
 from usage_cache import (
     apply_session_floor,
+    get_fresh_provider,
     load_usage_cache as _load_usage_cache,
     normalize_percent,
     parse_epoch,
     parse_usage_output,
-    provider_updated_at,
     save_usage_cache as _save_usage_cache,
 )
 
@@ -65,6 +66,8 @@ CODEX_AUTH_FILE = os.path.expanduser("~/.codex/auth.json")
 CODEX_SESSIONS_DIR = os.path.expanduser("~/.codex/sessions")
 CODEX_USAGE_API_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_FIVE_HOUR_MAX_SECONDS = 6 * 3600
+CODEX_WEEK_MIN_SECONDS = 6 * 86400
+CODEX_WEEK_MAX_SECONDS = 8 * 86400
 
 
 # ============================================================================
@@ -89,6 +92,23 @@ def get_usage_cache_path() -> str:
         pass
     cache_dir = os.path.dirname(os.path.expanduser(cache_path))
     return os.path.join(cache_dir, "usage.json")
+
+
+def available_providers(cache: dict[str, Any] | None = None) -> set[str]:
+    """Return providers that have a local client/source or existing cache."""
+    providers = {
+        name for name in ("claude", "codex")
+        if isinstance(cache, dict) and isinstance(cache.get(name), dict)
+    }
+    if shutil.which("claude") or os.path.isfile(CLAUDE_CREDENTIALS_FILE):
+        providers.add("claude")
+    if (
+        shutil.which("codex")
+        or os.path.isfile(CODEX_AUTH_FILE)
+        or os.path.isdir(CODEX_SESSIONS_DIR)
+    ):
+        providers.add("codex")
+    return providers
 
 
 # ============================================================================
@@ -208,6 +228,22 @@ def read_codex_token() -> tuple[str, str] | None:
         return None
 
 
+def _codex_window_kind(bucket: Any) -> str | None:
+    if not isinstance(bucket, dict):
+        return None
+    try:
+        window_seconds = float(bucket.get("limit_window_seconds") or 0)
+        if window_seconds <= 0:
+            window_seconds = float(bucket.get("window_minutes") or 0) * 60
+    except (TypeError, ValueError):
+        return None
+    if 0 < window_seconds <= CODEX_FIVE_HOUR_MAX_SECONDS:
+        return "session"
+    if CODEX_WEEK_MIN_SECONDS <= window_seconds <= CODEX_WEEK_MAX_SECONDS:
+        return "week_all"
+    return None
+
+
 def fetch_codex_usage_live() -> dict[str, Any] | None:
     """Fetch plan usage directly from the same account-level usage endpoint
     Codex CLI's own `/status` polls, via the local Codex login token. Needs
@@ -262,10 +298,10 @@ def fetch_codex_usage_live() -> dict[str, Any] | None:
     for raw_window in (rate_limit.get("primary_window"), rate_limit.get("secondary_window")):
         if not isinstance(raw_window, dict):
             continue
-        window_seconds = raw_window.get("limit_window_seconds") or 0
-        if window_seconds and window_seconds <= CODEX_FIVE_HOUR_MAX_SECONDS:
+        kind = _codex_window_kind(raw_window)
+        if kind == "session":
             session = _window(raw_window)
-        else:
+        elif kind == "week_all":
             week = _window(raw_window)
 
     if session is None and week is None:
@@ -334,8 +370,14 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
             rate_limits = payload.get("rate_limits") if isinstance(payload, dict) else None
             if not isinstance(rate_limits, dict):
                 continue
-            session = _window(rate_limits.get("primary"))
-            week = _window(rate_limits.get("secondary"))
+            session = None
+            week = None
+            for raw_window in (rate_limits.get("primary"), rate_limits.get("secondary")):
+                kind = _codex_window_kind(raw_window)
+                if kind == "session":
+                    session = _window(raw_window)
+                elif kind == "week_all":
+                    week = _window(raw_window)
             if session is None and week is None:
                 continue
             result: dict[str, Any] = {}
@@ -358,12 +400,12 @@ def load_usage_cache() -> dict[str, Any] | None:
     return _load_usage_cache(get_usage_cache_path())
 
 
-def save_usage_cache(usage: dict[str, Any]) -> None:
+def save_usage_cache(usage: dict[str, Any]) -> bool:
     """Merge provider updates and stamp each provider independently."""
-    _save_usage_cache(get_usage_cache_path(), usage)
+    return _save_usage_cache(get_usage_cache_path(), usage)
 
 
-def refresh_usage() -> str:
+def refresh_usage(providers: set[str] | None = None) -> str:
     """Refresh the usage cache for Claude and Codex independently, so one
     provider's outage doesn't block the other's refresh.
 
@@ -372,13 +414,13 @@ def refresh_usage() -> str:
     found or the API call fails. Codex: the ChatGPT usage API, falling back
     to the newest local session log.
 
-    A non-blocking lock ensures only one refresh runs at a time across this
-    script and statusline.py's background refresh; the guard lock is released
-    before writing since save_usage_cache() takes its own lock on the same
-    file. Returns "refreshed", "busy" (another refresh in flight), or
-    "failed" (neither provider produced usable data).
+    A non-blocking refresh lock ensures only one network refresh runs at a
+    time. Cache writes use a separate short-lived lock shared with
+    statusline.py. Returns "refreshed", "busy" (another refresh in flight),
+    "failed" (neither provider produced usable data), or "failed-to-save".
     """
-    lockfile = f"{get_usage_cache_path()}.lock"
+    requested = providers or {"claude", "codex"}
+    lockfile = f"{get_usage_cache_path()}.refresh.lock"
     lock_fd = None
     claude_usage: dict[str, Any] | None = None
     codex_usage: dict[str, Any] | None = None
@@ -391,8 +433,8 @@ def refresh_usage() -> str:
             except (IOError, OSError):
                 return "busy"
 
-        claude_usage = fetch_claude_usage_live()
-        if claude_usage is None:
+        claude_usage = fetch_claude_usage_live() if "claude" in requested else None
+        if "claude" in requested and claude_usage is None:
             try:
                 result = subprocess.run(
                     ["claude", "-p", "/usage"],
@@ -404,7 +446,8 @@ def refresh_usage() -> str:
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
                 claude_usage = None
 
-        codex_usage = fetch_codex_usage_live() or get_codex_usage_from_sessions()
+        if "codex" in requested:
+            codex_usage = fetch_codex_usage_live() or get_codex_usage_from_sessions()
     finally:
         if lock_fd is not None:
             try:
@@ -421,7 +464,8 @@ def refresh_usage() -> str:
         cache["claude"] = apply_session_floor(claude_usage)
     if codex_usage:
         cache["codex"] = codex_usage
-    save_usage_cache(cache)
+    if not save_usage_cache(cache):
+        return "failed-to-save"
     return "refreshed"
 
 
@@ -445,19 +489,33 @@ def main() -> int:
     args = parser.parse_args()
 
     cache = load_usage_cache()
+    candidates = available_providers(cache) or {"claude", "codex"}
+    providers_to_refresh = set(candidates)
     if args.max_age > 0 and isinstance(cache, dict):
-        providers = [name for name in ("claude", "codex") if isinstance(cache.get(name), dict)]
-        if providers and all(
-            time.time() - provider_updated_at(cache, name) <= args.max_age
-            for name in providers
-        ):
+        now = time.time()
+        providers_to_refresh = set()
+        for name in candidates:
+            original = cache.get(name)
+            fresh = get_fresh_provider(cache, name, args.max_age, now=now)
+            if not isinstance(original, dict) or fresh is None:
+                providers_to_refresh.add(name)
+                continue
+            bucket_names = ("session", "week_all", "week_sonnet")
+            if any(key in original and key not in fresh for key in bucket_names):
+                providers_to_refresh.add(name)
+        if not providers_to_refresh:
             print(json.dumps(cache))
             return 0
 
-    outcome = refresh_usage()
-    if outcome == "failed":
+    outcome = refresh_usage(providers_to_refresh)
+    if outcome in ("failed", "failed-to-save"):
         print(
-            "failed to refresh usage: no Claude or Codex source was available",
+            "failed to refresh usage: "
+            + (
+                "cache write failed"
+                if outcome == "failed-to-save"
+                else "no Claude or Codex source was available"
+            ),
             file=sys.stderr,
         )
         return 1

@@ -140,11 +140,31 @@ def get_fresh_provider(
     data = cache.get(provider)
     if not isinstance(data, dict):
         return None
-    observed_at = provider_updated_at(cache, provider)
     current_time = time.time() if now is None else now
+    observed_at = provider_updated_at(cache, provider)
     if observed_at <= 0 or current_time - observed_at > max_age_seconds:
         return None
-    return data
+
+    fresh = dict(data)
+    for bucket_name in ("session", "week_all", "week_sonnet"):
+        bucket = data.get(bucket_name)
+        if not isinstance(bucket, dict):
+            continue
+        try:
+            bucket_updated_at = float(bucket.get("updated_at", observed_at))
+        except (TypeError, ValueError):
+            bucket_updated_at = 0
+        resets_at = parse_epoch(bucket.get("resets_at"))
+        if (
+            bucket_updated_at <= 0
+            or current_time - bucket_updated_at > max_age_seconds
+            or (resets_at is not None and resets_at <= current_time)
+        ):
+            fresh.pop(bucket_name, None)
+
+    if not any(isinstance(fresh.get(name), dict) for name in ("session", "week_all", "week_sonnet")):
+        return None
+    return fresh
 
 
 def save_usage_cache(cache_path: str, updates: dict[str, Any], now: float | None = None) -> bool:
@@ -163,7 +183,14 @@ def save_usage_cache(cache_path: str, updates: dict[str, Any], now: float | None
         for provider, value in updates.items():
             if not isinstance(value, dict):
                 continue
-            payload[provider] = {**value, "updated_at": updated_at}
+            existing = payload.get(provider)
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            for key, item in value.items():
+                if key in ("session", "week_all", "week_sonnet") and isinstance(item, dict):
+                    merged[key] = {**item, "updated_at": updated_at}
+                else:
+                    merged[key] = item
+            payload[provider] = {**merged, "updated_at": updated_at}
         # Retain ts for older installed hooks; freshness decisions use the
         # provider-level updated_at above.
         payload["ts"] = updated_at

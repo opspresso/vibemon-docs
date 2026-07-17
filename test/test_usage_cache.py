@@ -56,6 +56,48 @@ class UsageCacheTest(unittest.TestCase):
         self.assertIsNotNone(get_fresh_provider(cache, "claude", 10, now=105))
         self.assertIsNone(get_fresh_provider(cache, "claude", 10, now=111))
 
+    def test_partial_provider_updates_preserve_bucket_freshness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = str(Path(directory) / "usage.json")
+            save_usage_cache(
+                cache_path,
+                {
+                    "claude": {
+                        "session": {"pct": 10, "resets_at": 1000},
+                        "week_all": {"pct": 20, "resets_at": 2000},
+                    }
+                },
+                now=100,
+            )
+            save_usage_cache(
+                cache_path,
+                {"claude": {"session": {"pct": 30, "resets_at": 1100}}},
+                now=200,
+            )
+            cache = json.loads(Path(cache_path).read_text())
+
+        self.assertEqual(cache["claude"]["session"]["updated_at"], 200)
+        self.assertEqual(cache["claude"]["week_all"]["updated_at"], 100)
+        fresh = get_fresh_provider(cache, "claude", 50, now=225)
+        self.assertEqual(fresh["session"]["pct"], 30)
+        self.assertNotIn("week_all", fresh)
+
+    def test_bucket_expires_at_its_reset_time(self):
+        cache = {
+            "claude": {
+                "updated_at": 100,
+                "session": {"pct": 95, "resets_at": 110, "updated_at": 100},
+                "week_all": {"pct": 20, "resets_at": 1000, "updated_at": 100},
+            }
+        }
+
+        before = get_fresh_provider(cache, "claude", 50, now=109)
+        after = get_fresh_provider(cache, "claude", 50, now=110)
+
+        self.assertIn("session", before)
+        self.assertNotIn("session", after)
+        self.assertIn("week_all", after)
+
 
 if __name__ == "__main__":
     unittest.main()
