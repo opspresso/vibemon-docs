@@ -100,7 +100,7 @@ Codex uses the same `~/.vibemon/config.json` as Claude Code and Kiro. Enable Cod
 hooks = true
 ```
 
-Then merge [`codex/hooks.json`](./docs/codex/hooks.json) into your existing `~/.codex/hooks.json` (do not overwrite). Codex hooks are experimental and Windows support is currently disabled.
+Then merge [`codex/hooks.json`](./docs/codex/hooks.json) into your existing `~/.codex/hooks.json` (do not overwrite). Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported.
 
 ### OpenClaw Configuration
 
@@ -310,7 +310,7 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 
 `PreToolUse`, `PermissionRequest`, and `PostToolUse` are registered with a `Bash`-only matcher (see `docs/codex/hooks.json`), so non-Bash tool calls (Read, Edit, etc.) don't trigger a state change.
 
-Codex hooks are experimental, and Windows support is currently disabled for hooks.
+Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported.
 
 ### Kiro IDE
 

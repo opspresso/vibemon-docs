@@ -440,6 +440,7 @@ curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_to
 # --codex / --kiro / --openclaw for other tools, --all for every detected tool</code></pre>
                 <p>Interactive prompt version:</p>
                 <pre><code>curl -fsSL https://docs.vibemon.io/install.py | python3</code></pre>
+                <p>Or point your AI agent at <a href="./setup.md">docs/setup.md</a> (<code>https://docs.vibemon.io/setup.md</code>) and have it follow the instructions directly.</p>
 
                 <h3>Local Install</h3>
                 <pre><code>git clone https://github.com/opspresso/vibemon-docs.git
@@ -456,8 +457,8 @@ python3 docs/install.py</code></pre>
   "auto_launch": true,
   "http_urls": [],
   "serial_port": null,
-  "vibemon_url": "https://vibemon.io",
-  "vibemon_token": ""
+  "vibemon_token": "",
+  "vibemon_url": "https://vibemon.io"
 }</code></pre>
                 <table>
                     <thead><tr><th>Field</th><th>Description</th><th>Example</th></tr></thead>
@@ -471,16 +472,22 @@ python3 docs/install.py</code></pre>
                         <tr><td><code>vibemon_token</code></td><td>VibeMon API access token (from dashboard)</td><td></td></tr>
                     </tbody>
                 </table>
-                <p>Claude Code's statusline reads a separate <code>~/.vibemon/statusline.json</code> for <code>show_*</code> display toggles (e.g. <code>show_cost</code>, <code>show_git</code>, <code>show_model</code>, <code>show_tokens</code>) and the fallback <code>token_reset_hours</code> setting — see <a href="./vibemon/statusline.example.json">statusline.example.json</a> for the full set of defaults. This file is optional; statusline.py falls back to sensible defaults when it's absent.</p>
+                <p>Claude Code's statusline reads a separate <code>~/.vibemon/statusline.json</code> for display toggles (e.g. <code>show_cost</code>, <code>show_git</code>, <code>show_model</code>, <code>show_tokens</code>) and the fallback <code>token_reset_hours</code> setting — see <a href="./vibemon/statusline.example.json">statusline.example.json</a> for the full set of defaults. This file is optional; statusline.py falls back to sensible defaults (and to any matching keys still in <code>config.json</code>) when it's absent.</p>
+
+                <p>The Claude Code installer also places a standalone refresher at <code>~/.vibemon/usage.py</code>. For Claude, it fetches plan usage directly from Anthropic's OAuth usage API using the local Claude Code login token (no active session required), falling back to a <code>claude -p "/usage"</code> subprocess when a token isn't available or the API call fails. For Codex, it queries the same account-level usage API Codex CLI's own <code>/status</code> polls using the local Codex login token, falling back to the newest local session log. Either way it writes the shared <code>~/.vibemon/cache/usage.json</code>, so the Desktop app can run it (<code>python3 ~/.vibemon/usage.py --max-age 600</code>) on startup or on a schedule to keep usage data fresh even when no Claude Code or Codex session is active. Since the <code>claude -p "/usage"</code> fallback is itself a real Claude Code session, the Desktop app sets <code>VIBEMON_SUPPRESS_HOOKS=1</code> in its environment so the spawned session's own hooks don't report status back — otherwise it would surface as a phantom project (<code>.vibemon</code>, its cwd).</p>
+
+                <p>The reset-countdown fields the hooks attach (<code>usage5hResetsIn</code>/<code>usageWeekResetsIn</code>) are populated whenever the cache was refreshed via a <code>resets_at</code> epoch — either an active Claude Code session's statusline (the official <code>rate_limits</code> path), <code>usage.py</code>'s direct Anthropic/Codex API queries, or a Codex session log. Only the last-resort <code>claude -p "/usage"</code> text fallback lacks a machine-parseable reset time, so the reset countdown is omitted in that case while the usage percentages still update.</p>
+
+                <p>Note that the plan-usage fields (<code>usage5h</code>/<code>usageWeek</code> and their reset countdowns) are sent by the <strong>Claude Code and Codex hooks</strong>, since they both read from the same <code>usage.py</code>-refreshed cache (under separate <code>claude</code>/<code>codex</code> cache keys). The Kiro hook doesn't report usage, and OpenClaw reports context-window usage as <code>memory</code> instead.</p>
 
                 <h3>Codex Configuration</h3>
                 <p>Codex uses the same <code>~/.vibemon/config.json</code> as Claude Code and Kiro. Enable Codex hooks in <code>~/.codex/config.toml</code>:</p>
                 <pre><code>[features]
 hooks = true</code></pre>
-                <p>Then merge <a href="./codex/hooks.json">codex/hooks.json</a> into your existing <code>~/.codex/hooks.json</code> (do not overwrite). Codex hooks are experimental and Windows support is currently disabled.</p>
+                <p>Then merge <a href="./codex/hooks.json">codex/hooks.json</a> into your existing <code>~/.codex/hooks.json</code> (do not overwrite). Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported.</p>
 
                 <h3>OpenClaw Configuration</h3>
-                <p>The OpenClaw plugin reads transmission settings (<code>http_urls</code>, <code>serial_port</code>, <code>vibemon_url</code>, <code>vibemon_token</code>) from the same <code>~/.vibemon/config.json</code> as the other tools. It only needs to be registered and enabled in <code>~/.openclaw/openclaw.json</code>:</p>
+                <p>The OpenClaw plugin reads transmission settings (<code>http_urls</code>, <code>serial_port</code>, <code>vibemon_url</code>, <code>vibemon_token</code>) from the same <code>~/.vibemon/config.json</code> as the other tools. It only needs to be registered and enabled in <code>~/.openclaw/openclaw.json</code> — OpenClaw doesn't auto-discover extension directories, so the plugin path must also be registered under <code>plugins.load.paths</code> or the manifest/entries config alone won't load it:</p>
                 <pre><code>{
   "plugins": {
     "load": {
@@ -488,12 +495,14 @@ hooks = true</code></pre>
     },
     "entries": {
       "vibemon-bridge": {
-        "enabled": true
+        "enabled": true,
+        "hooks": { "allowConversationAccess": true }
       }
     }
   }
 }</code></pre>
                 <p>To override the shared settings for OpenClaw only, add a <code>config</code> object to the entry (<code>projectName</code>, <code>character</code>, <code>httpEnabled</code>, <code>httpUrls</code>, <code>serialEnabled</code>, <code>vibemonUrl</code>, <code>vibemonToken</code>, <code>autoLaunch</code>, <code>debug</code>) — plugin config always wins over <code>~/.vibemon/config.json</code>.</p>
+                <p>After installing or updating the plugin, rebuild OpenClaw's persisted plugin registry and restart the gateway (<code>openclaw plugins registry --refresh &amp;&amp; openclaw gateway restart</code>) — the gateway boots from a registry snapshot and won't pick up the plugin's hooks otherwise. The installer runs the refresh automatically when the <code>openclaw</code> CLI is available.</p>
             </section>
 
             <section id="cli">
@@ -521,13 +530,7 @@ python3 ~/.claude/hooks/vibemon.py --reboot</code></pre>
                 <h3>Desktop App</h3>
                 <p>Electron app with system tray for macOS, Windows, Linux. See <a href="#install">Installation</a> above to install.</p>
                 <p>Token can be configured via the system tray menu.</p>
-                <table>
-                    <thead><tr><th>Window Mode</th><th>Description</th></tr></thead>
-                    <tbody>
-                        <tr><td><code>multi</code></td><td>One window per project (max 5) - Default</td></tr>
-                        <tr><td><code>single</code></td><td>One window with project lock support</td></tr>
-                    </tbody>
-                </table>
+                <p>It shows a single character window with a speech bubble that follows it. The window retargets to whichever project is currently active instead of opening one window per project.</p>
                 <p>Features: frameless floating window, always on top, system tray integration, snap to screen corners, click to focus terminal (macOS).</p>
 
                 <h3>ESP32 Hardware</h3>
@@ -598,12 +601,12 @@ echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/ttyACM0</
                     <tbody>
                         <tr><td><code>state</code></td><td>string</td><td>start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required)</td></tr>
                         <tr><td><code>project</code></td><td>string</td><td>Project name (required)</td></tr>
-                        <tr><td><code>character</code></td><td>string</td><td>vibemon (default), clawd, codex, kiro, or claw (required); an unrecognized value falls back to vibemon rather than being rejected. daangni also available via manual character config</td></tr>
+                        <tr><td><code>character</code></td><td>string</td><td>vibemon (default), clawd, codex, kiro, claw, or daangni (required); an unrecognized value falls back to vibemon rather than being rejected. daangni is manual selection only (no tool maps to it)</td></tr>
                         <tr><td><code>tool</code></td><td>string</td><td>Tool name (Bash, Read, Edit, etc.) (optional)</td></tr>
                         <tr><td><code>model</code></td><td>string</td><td>Model name (opus, sonnet, etc.) (optional)</td></tr>
                         <tr><td><code>memory</code></td><td>number</td><td>Context window usage 0-100 (optional)</td></tr>
-                        <tr><td><code>usage5h</code></td><td>number</td><td>5-hour reset plan usage 0-100 (optional)</td></tr>
-                        <tr><td><code>usageWeek</code></td><td>number</td><td>Weekly (all models) reset plan usage 0-100 (optional)</td></tr>
+                        <tr><td><code>usage5h</code> / <code>usageWeek</code></td><td>number</td><td>Plan-usage percentage 0-100 (optional; Claude Code and Codex hooks only — see above)</td></tr>
+                        <tr><td><code>usage5hResetsIn</code> / <code>usageWeekResetsIn</code></td><td>number</td><td>Minutes until the usage window resets (optional; see above)</td></tr>
                     </tbody>
                 </table>
                 <pre><code># Delete agent status
@@ -653,7 +656,7 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                     </tbody>
                 </table>
                 <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>PreToolUse</code>, <code>PermissionRequest</code>, and <code>PostToolUse</code> are registered with a <code>Bash</code>-only matcher (see <code>docs/codex/hooks.json</code>), so non-Bash tool calls (Read, Edit, etc.) don't trigger a state change.</p>
-                <p>Codex hooks are experimental, and Windows support is currently disabled for hooks.</p>
+                <p>Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported.</p>
 
                 <h3>Kiro IDE</h3>
                 <table>
