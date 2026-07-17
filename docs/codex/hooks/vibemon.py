@@ -33,7 +33,7 @@ except ImportError:
     sys.exit(0)
 
 # Character configuration
-CHARACTER = "vibemon"
+CHARACTER = "codex"
 
 # Event to state mapping (immutable)
 EVENT_STATE_MAP: dict[str, str] = {

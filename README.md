@@ -7,7 +7,7 @@ VibeMon is a real-time status monitoring system for AI coding assistants. It dis
 | Platform | Character | Description |
 |----------|-----------|-------------|
 | **Claude Code** | clawd | Anthropic's CLI for Claude |
-| **Codex CLI** | vibemon | OpenAI's CLI for Codex |
+| **Codex CLI** | codex | OpenAI's CLI for Codex |
 | **Kiro IDE** | kiro | Amazon's AI coding assistant |
 | **OpenClaw** | claw | Open source AI gateway |
 
