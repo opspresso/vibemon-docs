@@ -966,6 +966,14 @@ def run(
       when stdin carries no hook_event_name (Kiro hook registrations pass the
       event name as the first argument, e.g. `vibemon.py promptSubmit`)
     """
+    if os.environ.get("VIBEMON_SUPPRESS_HOOKS") == "1":
+        # Set by VibeMon's own usage-refresher when it spawns
+        # `claude -p "/usage"` to refresh the plan-usage cache — that
+        # subprocess is a real Claude Code session and would otherwise report
+        # status here under a ".vibemon" project (its cwd).
+        debug_log("Hook suppressed (VIBEMON_SUPPRESS_HOOKS=1)")
+        return
+
     argv_event = ""
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
