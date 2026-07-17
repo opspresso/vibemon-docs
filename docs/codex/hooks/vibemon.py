@@ -56,6 +56,7 @@ def build_payload(
     """Build payload dict for sending to monitor. Codex includes the active
     model in the hook payload; the statusline cache is only a fallback."""
     metadata = core.get_project_metadata(project)
+    usage = core.get_codex_usage_metadata()
     model_name = data.get("model", "")
 
     return {
@@ -66,6 +67,7 @@ def build_payload(
         "memory": metadata.get("memory", 0),
         "character": CHARACTER,
         "terminalId": core.get_terminal_id(),
+        **usage,
     }
 
 

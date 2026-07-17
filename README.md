@@ -85,11 +85,11 @@ After installation, edit `~/.vibemon/config.json` to configure your targets:
 
 Claude Code's statusline reads a separate `~/.vibemon/statusline.json` for display toggles (e.g. `show_cost`, `show_git`, `show_model`, `show_tokens`) and usage-polling settings (`usage_enabled`, `usage_refresh_seconds`, `token_reset_hours`) — see [statusline.example.json](./docs/vibemon/statusline.example.json) for the full set of defaults. This file is optional; statusline.py falls back to sensible defaults (and to any matching keys still in `config.json`) when it's absent.
 
-The Claude Code installer also places a standalone refresher at `~/.vibemon/usage.py`. It fetches plan usage via `claude -p "/usage"` and writes the shared `~/.vibemon/cache/usage.json`, so the Desktop app can run it (`python3 ~/.vibemon/usage.py --max-age 600`) on startup or on a schedule to keep usage data fresh even when no Claude Code session is active. Since `claude -p "/usage"` is itself a real Claude Code session, the Desktop app sets `VIBEMON_SUPPRESS_HOOKS=1` in its environment so the spawned session's own hooks don't report status back — otherwise it would surface as a phantom project (`.vibemon`, its cwd).
+The Claude Code installer also places a standalone refresher at `~/.vibemon/usage.py`. For Claude, it fetches plan usage directly from Anthropic's OAuth usage API using the local Claude Code login token (no active session required), falling back to a `claude -p "/usage"` subprocess when a token isn't available or the API call fails. For Codex, it queries the same account-level usage API Codex CLI's own `/status` polls using the local Codex login token, falling back to the newest local session log. Either way it writes the shared `~/.vibemon/cache/usage.json`, so the Desktop app can run it (`python3 ~/.vibemon/usage.py --max-age 600`) on startup or on a schedule to keep usage data fresh even when no Claude Code or Codex session is active. Since the `claude -p "/usage"` fallback is itself a real Claude Code session, the Desktop app sets `VIBEMON_SUPPRESS_HOOKS=1` in its environment so the spawned session's own hooks don't report status back — otherwise it would surface as a phantom project (`.vibemon`, its cwd).
 
-The reset-countdown fields the hooks attach (`usage5hResetsIn`/`usageWeekResetsIn`) are only populated when an active Claude Code session refreshes the cache through its statusline (the official `rate_limits` path). The `claude -p "/usage"` path used by `usage.py` yields only display strings, so the usage percentages still update but the reset countdown is omitted.
+The reset-countdown fields the hooks attach (`usage5hResetsIn`/`usageWeekResetsIn`) are populated whenever the cache was refreshed via a `resets_at` epoch — either an active Claude Code session's statusline (the official `rate_limits` path), `usage.py`'s direct Anthropic/Codex API queries, or a Codex session log. Only the last-resort `claude -p "/usage"` text fallback lacks a machine-parseable reset time, so the reset countdown is omitted in that case while the usage percentages still update.
 
-Note that the plan-usage fields (`usage5h`/`usageWeek` and their reset countdowns) are sent by the **Claude Code hook only**, since they come from Claude's plan-usage cache. The Codex and Kiro hooks don't report usage, and OpenClaw reports context-window usage as `memory` instead.
+Note that the plan-usage fields (`usage5h`/`usageWeek` and their reset countdowns) are sent by the **Claude Code and Codex hooks**, since they both read from the same `usage.py`-refreshed cache (under separate `claude`/`codex` cache keys). The Kiro hook doesn't report usage, and OpenClaw reports context-window usage as `memory` instead.
 
 ### Codex Configuration
 
@@ -260,7 +260,7 @@ curl -X POST https://vibemon.io/api/status \
 | `tool` | string | Tool name (Bash, Read, Edit, etc.) (optional) |
 | `model` | string | Model name (opus, sonnet, etc.) (optional) |
 | `memory` | number | Context window usage 0-100 (optional) |
-| `usage5h` / `usageWeek` | number | Plan-usage percentage 0-100 (optional; Claude Code hook only — see below) |
+| `usage5h` / `usageWeek` | number | Plan-usage percentage 0-100 (optional; Claude Code and Codex hooks only — see below) |
 | `usage5hResetsIn` / `usageWeekResetsIn` | number | Seconds until the usage window resets (optional; see below) |
 
 ```bash

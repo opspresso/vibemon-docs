@@ -294,19 +294,8 @@ def _resets_in_minutes(entry: dict[str, Any]) -> int | None:
     return max(0, round((resets_at - time.time()) / 60))
 
 
-def get_usage_metadata() -> dict[str, Any]:
-    """Get plan-usage percentages from statusline's usage cache.
-
-    statusline.py caches plan usage (from the statusline payload's official
-    `rate_limits` field, or a `claude -p "/usage"` subprocess as fallback) next
-    to the project cache (~/.vibemon/cache/usage.json). Returns {usage5h,
-    usageWeek, usage5hResetsIn, usageWeekResetsIn} for the 5-hour session
-    window and the weekly (all-models) window — the ResetsIn fields (minutes
-    until reset) are included only when the cache has a `resets_at` epoch for
-    that bucket. Keys are omitted when the cache is missing or a value is
-    unavailable, so the API can remove stale values instead of overwriting
-    them with 0.
-    """
+def _load_fresh_usage_cache() -> dict[str, Any] | None:
+    """Load ~/.vibemon/cache/usage.json, or None if missing/unreadable/stale."""
     config = get_config()
     usage_path = os.path.join(os.path.dirname(config.cache_path), "usage.json")
 
@@ -314,28 +303,70 @@ def get_usage_metadata() -> dict[str, Any]:
         with open(usage_path) as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, IOError):
-        return {}
+        return None
 
     try:
         if (time.time() - float(data.get("ts", 0))) > CACHE_STALE_SECONDS:
-            return {}
+            return None
     except (TypeError, ValueError):
+        return None
+
+    return data
+
+
+def _usage_fields(bucket_data: dict[str, Any] | None) -> dict[str, Any]:
+    """Build {usage5h, usageWeek, usage5hResetsIn, usageWeekResetsIn} from a
+    provider's `{session, week_all}` cache entry. The ResetsIn fields
+    (minutes until reset) are included only when the entry has a `resets_at`
+    epoch. Keys are omitted when a value is unavailable, so the API can
+    remove stale values instead of overwriting them with 0.
+    """
+    if not isinstance(bucket_data, dict):
         return {}
 
     result: dict[str, Any] = {}
-    session = data.get("session")
+    session = bucket_data.get("session")
     if isinstance(session, dict) and isinstance(session.get("pct"), int):
         result["usage5h"] = session["pct"]
         resets_in = _resets_in_minutes(session)
         if resets_in is not None:
             result["usage5hResetsIn"] = resets_in
-    week = data.get("week_all")
+    week = bucket_data.get("week_all")
     if isinstance(week, dict) and isinstance(week.get("pct"), int):
         result["usageWeek"] = week["pct"]
         resets_in = _resets_in_minutes(week)
         if resets_in is not None:
             result["usageWeekResetsIn"] = resets_in
     return result
+
+
+def get_usage_metadata() -> dict[str, Any]:
+    """Get Claude plan-usage percentages from the shared usage cache.
+
+    usage.py/statusline.py cache plan usage (from the statusline payload's
+    official `rate_limits` field, Anthropic's usage API, or a `claude -p
+    "/usage"` subprocess as fallback) next to the project cache
+    (~/.vibemon/cache/usage.json), under the "claude" key. Returns {usage5h,
+    usageWeek, usage5hResetsIn, usageWeekResetsIn} for the 5-hour session
+    window and the weekly (all-models) window.
+    """
+    data = _load_fresh_usage_cache()
+    if data is None:
+        return {}
+    return _usage_fields(data.get("claude"))
+
+
+def get_codex_usage_metadata() -> dict[str, Any]:
+    """Get Codex plan-usage percentages from the shared usage cache.
+
+    Same cache file and field shape as get_usage_metadata(), read from the
+    "codex" key that usage.py populates from Codex CLI's account-level usage
+    API (or its local session log as a fallback).
+    """
+    data = _load_fresh_usage_cache()
+    if data is None:
+        return {}
+    return _usage_fields(data.get("codex"))
 
 
 def get_terminal_id() -> str:

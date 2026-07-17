@@ -838,7 +838,12 @@ def apply_session_floor(usage: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_usage_cache(usage: dict[str, Any]) -> None:
-    """Atomically write the usage cache (stamps a fresh `ts`).
+    """Atomically write the usage cache, merged with whatever's already there
+    (stamps a fresh `ts`).
+
+    Merging (rather than overwriting) matters because Claude and Codex usage
+    are refreshed independently — writing Claude's entry from here must not
+    wipe out a "codex" entry usage.py wrote to the same file, and vice versa.
 
     Takes a single non-blocking lock attempt (unlike save_to_cache's
     retry-with-timeout loop) because this is called synchronously from
@@ -860,7 +865,9 @@ def save_usage_cache(usage: dict[str, Any]) -> None:
             except (IOError, OSError):
                 return  # Another writer holds it; skip, next render retries
 
-        payload = dict(usage)
+        existing = load_usage_cache()
+        payload = dict(existing) if isinstance(existing, dict) else {}
+        payload.update(usage)
         payload["ts"] = int(time.time())
         tmpfile = f"{cache_path}.tmp.{os.getpid()}"
         with open(tmpfile, "w") as f:
@@ -918,7 +925,7 @@ def refresh_usage() -> None:
                 pass
 
     if usage:
-        save_usage_cache(apply_session_floor(usage))
+        save_usage_cache({"claude": apply_session_floor(usage)})
 
 
 def maybe_refresh_usage_background(cache: dict[str, Any] | None) -> None:
@@ -1244,16 +1251,18 @@ def main() -> None:
 
     # Plan usage: prefer the official rate_limits field from this same
     # payload (Claude Code >= v2.1.80, always fresh, no subprocess). Persist
-    # it to the usage cache so hooks/vibemon.py (which reads the file, not
-    # this process's stdin) also sees the up-to-date value. Fall back to the
-    # claude -p "/usage" subprocess cache for older Claude Code versions.
+    # it to the usage cache (under the "claude" key) so hooks/vibemon.py
+    # (which reads the file, not this process's stdin) also sees the
+    # up-to-date value. Fall back to the claude -p "/usage" subprocess cache
+    # for older Claude Code versions.
     usage_cache = usage_from_rate_limits(data)
     if usage_cache is not None:
         usage_cache = apply_session_floor(usage_cache)
-        save_usage_cache(usage_cache)
+        save_usage_cache({"claude": usage_cache})
     else:
-        usage_cache = load_usage_cache()
-        maybe_refresh_usage_background(usage_cache)
+        raw_cache = load_usage_cache()
+        maybe_refresh_usage_background(raw_cache)
+        usage_cache = raw_cache.get("claude") if isinstance(raw_cache, dict) else None
     usage_segment = build_usage_segment(usage_cache)
 
     # Session reset countdown: prefer the real /usage reset time; fall back to
