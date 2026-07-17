@@ -102,6 +102,7 @@
             height: 80px;
             border-radius: 50%;
             background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
             padding: 8px;
             transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
@@ -109,7 +110,7 @@
             transform: scale(1.1);
         }
         .character.selected img {
-            box-shadow: 0 0 0 3px #ed8936;
+            box-shadow: 0 0 0 3px #f7931e;
         }
         .character-name {
             margin-top: 0.75rem;
@@ -119,6 +120,16 @@
         .character-platform {
             font-size: 0.75rem;
             color: #4a5568;
+        }
+        .ai-agent-note {
+            margin-top: 1rem;
+            padding: 0.75rem 1.25rem;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+        }
+        .ai-agent-note p {
+            margin: 0;
         }
         .live-display {
             margin: 2rem auto 0;
@@ -302,9 +313,11 @@
             Then open <strong>Settings &gt; AI Tools</strong> in the app to install hooks for Claude Code, Codex, Kiro, or OpenClaw with one click.
         </p>
 
-        <p class="description" style="margin-top: 0.5rem; margin-bottom: 0; font-size: 0.85rem;">
-            Are you an AI agent? Read <a href="./setup.md">setup.md</a>, or run <code>curl -fsSL https://docs.vibemon.io/install.py | python3</code> directly.
-        </p>
+        <div class="ai-agent-note">
+            <p class="description" style="font-size: 0.85rem;">
+                Are you an AI agent? Read <a href="./setup.md">setup.md</a>, or run <code>curl -fsSL https://docs.vibemon.io/install.py | python3</code> directly.
+            </p>
+        </div>
     </div>
 
     <script type="module">
