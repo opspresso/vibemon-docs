@@ -926,6 +926,25 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     return True
 
 
+def install_vibemon(source: FileSource, cli_token: str = None) -> bool:
+    """Install/repair only the shared ~/.vibemon assets (scripts + config).
+
+    Used by the Desktop app's "VibeMon Scripts" reinstall action; every
+    platform installer already runs the same steps as part of its install.
+    """
+    print(f"\n{colored('Installing VibeMon shared scripts...', 'cyan')}\n")
+
+    configure_vibemon_config(source, cli_token)
+    ok = install_vibemon_shared(source)
+
+    if not ok:
+        print(f"\n{colored('✗ VibeMon shared scripts installation finished with errors — some files were not written.', 'red')}")
+        return False
+
+    print(f"\n{colored('VibeMon shared scripts installation complete!', 'green')}")
+    return True
+
+
 def valid_token_arg(value: str) -> str:
     """Validate --token format for argparse (8-64 chars: a-z, 0-9, _, -)."""
     if not TOKEN_PATTERN.match(value):
@@ -962,6 +981,8 @@ Examples:
                         help="Install for OpenClaw")
     parser.add_argument("--all", action="store_true",
                         help="Install for all platforms")
+    parser.add_argument("--vibemon", action="store_true",
+                        help="Install only the shared ~/.vibemon scripts and config")
 
     # Configuration options
     parser.add_argument("--token", type=valid_token_arg, metavar="TOKEN",
@@ -990,7 +1011,7 @@ def main():
     args = parse_args()
 
     # Determine if non-interactive mode (any platform flag provided)
-    non_interactive = args.claude or args.codex or args.kiro or args.openclaw or args.all
+    non_interactive = args.claude or args.codex or args.kiro or args.openclaw or args.all or args.vibemon
     AUTO_APPROVE = args.yes or non_interactive
 
     # Enable interactive input when running via curl pipe (only if interactive)
@@ -1027,6 +1048,8 @@ def main():
                 results.append(run_install("Kiro IDE", install_kiro, source, args.token))
             if args.openclaw:
                 results.append(run_install("OpenClaw", install_openclaw, source, args.token))
+            if args.vibemon:
+                results.append(run_install("VibeMon Scripts", install_vibemon, source, args.token))
     else:
         # Interactive mode: show menu
         print("\nSelect platform to install:")
