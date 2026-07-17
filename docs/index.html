@@ -144,8 +144,7 @@
             border-radius: 16px;
         }
         /* vibemon-bubble.css supplies .bubble/.bubble-row/.bubble-tail etc.;
-           this page only needs the status row, sized/colored to match the
-           rest of the hero. */
+           this page sizes/colors the status and usage rows to match the hero. */
         .bubble {
             padding: 0.6rem 1rem;
             min-width: 160px;
@@ -295,6 +294,23 @@
                         <span class="bubble-dot"></span><span class="bubble-dot"></span><span class="bubble-dot"></span><span class="bubble-dot"></span>
                     </span>
                 </div>
+                <div class="bubble-row" data-field="project"></div>
+                <div class="bubble-row" data-field="model"></div>
+                <div class="bubble-row bubble-metric" data-field="memory">
+                    <span class="bubble-icon"></span>
+                    <span class="bubble-bar"><span class="bubble-bar-fill"></span></span>
+                    <span class="bubble-value"></span>
+                </div>
+                <div class="bubble-row bubble-metric" data-field="usage5h">
+                    <span class="bubble-icon"></span>
+                    <span class="bubble-bar"><span class="bubble-bar-fill"></span></span>
+                    <span class="bubble-value"></span>
+                </div>
+                <div class="bubble-row bubble-metric" data-field="usageWeek">
+                    <span class="bubble-icon"></span>
+                    <span class="bubble-bar"><span class="bubble-bar-fill"></span></span>
+                    <span class="bubble-value"></span>
+                </div>
                 <div class="bubble-tail"></div>
             </div>
         </div>
@@ -377,19 +393,50 @@
         const bubble = document.getElementById('live-bubble');
         let currentState = null;
         let currentCharacter = DEFAULT_PREVIEW_CHARACTER;
+        let demoUsage = null;
+
+        function getRandomInteger(max) {
+            return Math.floor(Math.random() * (max + 1));
+        }
+
+        function getUsageFields() {
+            if (currentCharacter === 'clawd') {
+                return {
+                    usage5h: { type: 'metric', icon: '⏱️', value: demoUsage.usage5h, resetIn: demoUsage.usage5hResetsIn },
+                    usageWeek: { type: 'metric', icon: '📅', value: demoUsage.usageWeek, resetIn: demoUsage.usageWeekResetsIn }
+                };
+            }
+            if (currentCharacter === 'codex') {
+                return {
+                    usageWeek: { type: 'metric', icon: '📅', value: demoUsage.usageWeek, resetIn: demoUsage.usageWeekResetsIn }
+                };
+            }
+            return {};
+        }
 
         function render() {
             engine.setState({ state: currentState, character: currentCharacter });
             engine.render();
             const config = states[currentState];
             renderBubble(bubble, {
-                status: { type: 'text', text: config.text, showLoading: config.loading, slow: currentState !== 'working' }
+                status: { type: 'text', text: config.text, showLoading: config.loading, slow: currentState !== 'working' },
+                project: { type: 'text', text: '📁 VibeMon' },
+                model: { type: 'text', text: '🤖 Opus 4.5' },
+                memory: { type: 'metric', icon: '🧠', value: demoUsage.memory },
+                ...getUsageFields()
             }, 'left', config.color, { opaque: true });
         }
 
         function showRandomState() {
             const candidates = stateNames.filter(name => name !== currentState);
             currentState = candidates[Math.floor(Math.random() * candidates.length)];
+            demoUsage = {
+                memory: getRandomInteger(100),
+                usage5h: getRandomInteger(100),
+                usageWeek: getRandomInteger(100),
+                usage5hResetsIn: getRandomInteger(5 * 60),
+                usageWeekResetsIn: getRandomInteger(7 * 24 * 60)
+            };
             render();
         }
 
