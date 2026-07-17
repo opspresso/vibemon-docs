@@ -1009,6 +1009,16 @@ def run(
     transcript_path = data.get("transcript_path", "")
     permission_mode = data.get("permission_mode", "default")
 
+    # A session working inside ~/.vibemon is VibeMon's own plumbing (the
+    # `claude -p "/usage"` subprocess usage.py spawns with that cwd), never a
+    # user project. Skip reporting regardless of VIBEMON_SUPPRESS_HOOKS so
+    # spawners that don't set the env var (older Desktop apps, manual
+    # usage.py runs) can't surface a phantom ".vibemon" project.
+    vibemon_home = os.path.realpath(os.path.expanduser("~/.vibemon"))
+    if cwd and os.path.realpath(cwd) == vibemon_home:
+        debug_log("Hook skipped (cwd is the VibeMon home dir)")
+        return
+
     project_name = get_project_name(cwd, transcript_path)
     state = get_state(event_name, permission_mode, event_state_map)
 
