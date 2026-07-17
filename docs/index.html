@@ -122,11 +122,15 @@
         }
         .live-display {
             margin: 2rem auto 0;
-            display: flex;
+            display: inline-flex;
             flex-direction: row;
             align-items: center;
             justify-content: center;
             gap: 1rem;
+            padding: 1.25rem 1.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
         }
         /* vibemon-bubble.css supplies .bubble/.bubble-row/.bubble-tail etc.;
            this page only needs the status row, sized/colored to match the
@@ -367,7 +371,7 @@
             const config = states[currentState];
             renderBubble(bubble, {
                 status: { type: 'text', text: config.text, showLoading: config.loading, slow: currentState !== 'working' }
-            }, 'left', config.color);
+            }, 'left', config.color, { opaque: true });
         }
 
         function showRandomState() {
