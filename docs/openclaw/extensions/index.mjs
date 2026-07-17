@@ -615,8 +615,10 @@ const plugin = {
       api.logger.info(`[vibemon] HTTP URLs: ${config.httpUrls.join(", ")}`);
     }
     // Log VibeMon API configuration
+    // Never log token content: tokens can be as short as 8 chars, so even a
+    // prefix can be the whole credential.
     if (config.vibemonUrl && config.vibemonToken) {
-      api.logger.info(`[vibemon] VibeMon API: ${config.vibemonUrl} (token: ${config.vibemonToken.slice(0, 8)}...)`);
+      api.logger.info(`[vibemon] VibeMon API: ${config.vibemonUrl} (token: set)`);
     } else {
       api.logger.info(`[vibemon] VibeMon API: disabled (url: ${config.vibemonUrl || "not set"}, token: ${config.vibemonToken ? "set" : "not set"})`);
     }
