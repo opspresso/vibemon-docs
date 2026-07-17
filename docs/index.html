@@ -143,14 +143,13 @@
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 16px;
         }
-        /* vibemon-bubble.css supplies .bubble/.bubble-row/.bubble-tail etc.;
-           this page sizes/colors the status and usage rows to match the hero. */
+        /* vibemon-bubble.css supplies .bubble/.bubble-row/.bubble-tail etc.
+           with the Desktop app's typography and row spacing; this page
+           renders the same full row set (status/project/model/memory/usage)
+           and only resets what the hero's own body styles would leak in. */
         .bubble {
-            padding: 0.6rem 1rem;
-            min-width: 160px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            font-family: monospace;
+            text-align: left;
+            line-height: normal;
             transition: background-color 0.4s ease, color 0.4s ease;
         }
         .bubble-tail {
@@ -298,17 +297,17 @@
                 <div class="bubble-row" data-field="model"></div>
                 <div class="bubble-row bubble-metric" data-field="memory">
                     <span class="bubble-icon"></span>
-                    <span class="bubble-bar"><span class="bubble-bar-fill"></span></span>
+                    <span class="bubble-bar-track"><span class="bubble-bar-fill"></span></span>
                     <span class="bubble-value"></span>
                 </div>
                 <div class="bubble-row bubble-metric" data-field="usage5h">
                     <span class="bubble-icon"></span>
-                    <span class="bubble-bar"><span class="bubble-bar-fill"></span></span>
+                    <span class="bubble-bar-track"><span class="bubble-bar-fill"></span></span>
                     <span class="bubble-value"></span>
                 </div>
                 <div class="bubble-row bubble-metric" data-field="usageWeek">
                     <span class="bubble-icon"></span>
-                    <span class="bubble-bar"><span class="bubble-bar-fill"></span></span>
+                    <span class="bubble-bar-track"><span class="bubble-bar-fill"></span></span>
                     <span class="bubble-value"></span>
                 </div>
                 <div class="bubble-tail"></div>
@@ -357,6 +356,16 @@
             kiro: 'Kiro IDE',
             claw: 'OpenClaw',
             daangni: 'Daangn'
+        };
+        // Demo model label per character, mirroring what each tool's hook
+        // reports — like PLATFORM_LABELS, demo-only data, not registry schema.
+        const CHARACTER_MODELS = {
+            vibemon: 'Opus 4.5',
+            clawd: 'Opus 4.5',
+            codex: 'gpt-5.2',
+            kiro: 'Sonnet 4.5',
+            claw: 'gpt-5.2',
+            daangni: 'Opus 4.5'
         };
 
         const [{ characters }, { states }] = await Promise.all([
@@ -421,7 +430,7 @@
             renderBubble(bubble, {
                 status: { type: 'text', text: config.text, showLoading: config.loading, slow: currentState !== 'working' },
                 project: { type: 'text', text: '📁 VibeMon' },
-                model: { type: 'text', text: '🤖 Opus 4.5' },
+                model: { type: 'text', text: `🤖 ${CHARACTER_MODELS[currentCharacter] || 'Opus 4.5'}` },
                 memory: { type: 'metric', icon: '🧠', value: demoUsage.memory },
                 ...getUsageFields()
             }, 'left', config.color, { opaque: true });
