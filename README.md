@@ -256,10 +256,12 @@ curl -X POST https://vibemon.io/api/status \
 |-------|------|-------------|
 | `state` | string | start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required) |
 | `project` | string | Project name (required) |
-| `character` | string | vibemon (default), clawd, kiro, claw, or daangni (required); daangni is manual selection only (no tool maps to it) |
+| `character` | string | vibemon (default), clawd, codex, kiro, claw, or daangni (required); an unrecognized value falls back to vibemon rather than being rejected. daangni is manual selection only (no tool maps to it) |
 | `tool` | string | Tool name (Bash, Read, Edit, etc.) (optional) |
 | `model` | string | Model name (opus, sonnet, etc.) (optional) |
 | `memory` | number | Context window usage 0-100 (optional) |
+| `usage5h` / `usageWeek` | number | Plan-usage percentage 0-100 (optional; Claude Code hook only — see below) |
+| `usage5hResetsIn` / `usageWeekResetsIn` | number | Seconds until the usage window resets (optional; see below) |
 
 ```bash
 # Delete agent status
@@ -297,14 +299,16 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 |-------|-------|
 | SessionStart | start |
 | UserPromptSubmit | thinking |
-| PreToolUse | working |
+| PreToolUse (Bash only) | working |
 | SubagentStart | working |
-| PermissionRequest | notification |
-| PostToolUse | thinking |
+| PermissionRequest (Bash only) | notification |
+| PostToolUse (Bash only) | thinking |
 | SubagentStop | thinking |
 | PreCompact | packing |
 | PostCompact | thinking |
 | Stop | done |
+
+`PreToolUse`, `PermissionRequest`, and `PostToolUse` are registered with a `Bash`-only matcher (see `docs/codex/hooks.json`), so non-Bash tool calls (Read, Edit, etc.) don't trigger a state change.
 
 Codex hooks are experimental, and Windows support is currently disabled for hooks.
 

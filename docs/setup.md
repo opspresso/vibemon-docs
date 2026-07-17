@@ -39,7 +39,7 @@ curl -fsSL https://docs.vibemon.io/install.py | python3 - --openclaw
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_workspace_01
 ```
 
-**Install all platforms:**
+**Install for every detected tool:**
 ```bash
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --all
 ```
@@ -498,7 +498,7 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 | Tool | Character | Setup Method |
 |------|-----------|--------------|
 | Claude Code | clawd | install.py or manual |
-| Codex CLI | vibemon | install.py or manual |
+| Codex CLI | codex | install.py or manual |
 | Kiro | kiro | install.py or manual |
 | OpenClaw | claw | install.py or manual |
 

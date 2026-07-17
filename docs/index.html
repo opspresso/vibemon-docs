@@ -453,7 +453,7 @@ python3 docs/install.py</code></pre>
                 <pre><code>{
   "debug": false,
   "cache_path": "~/.vibemon/cache/projects.json",
-  "auto_launch": false,
+  "auto_launch": true,
   "http_urls": [],
   "serial_port": null,
   "vibemon_url": "https://vibemon.io",
@@ -598,7 +598,7 @@ echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/ttyACM0</
                     <tbody>
                         <tr><td><code>state</code></td><td>string</td><td>start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required)</td></tr>
                         <tr><td><code>project</code></td><td>string</td><td>Project name (required)</td></tr>
-                        <tr><td><code>character</code></td><td>string</td><td>clawd, codex, kiro, or claw (required); daangni also available via manual character config</td></tr>
+                        <tr><td><code>character</code></td><td>string</td><td>vibemon (default), clawd, codex, kiro, or claw (required); an unrecognized value falls back to vibemon rather than being rejected. daangni also available via manual character config</td></tr>
                         <tr><td><code>tool</code></td><td>string</td><td>Tool name (Bash, Read, Edit, etc.) (optional)</td></tr>
                         <tr><td><code>model</code></td><td>string</td><td>Model name (opus, sonnet, etc.) (optional)</td></tr>
                         <tr><td><code>memory</code></td><td>number</td><td>Context window usage 0-100 (optional)</td></tr>
@@ -642,16 +642,17 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                     <tbody>
                         <tr><td><code>SessionStart</code></td><td>start</td></tr>
                         <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
-                        <tr><td><code>PreToolUse</code></td><td>working</td></tr>
+                        <tr><td><code>PreToolUse</code> (Bash only)</td><td>working</td></tr>
                         <tr><td><code>SubagentStart</code></td><td>working</td></tr>
-                        <tr><td><code>PermissionRequest</code></td><td>notification</td></tr>
-                        <tr><td><code>PostToolUse</code></td><td>thinking</td></tr>
+                        <tr><td><code>PermissionRequest</code> (Bash only)</td><td>notification</td></tr>
+                        <tr><td><code>PostToolUse</code> (Bash only)</td><td>thinking</td></tr>
                         <tr><td><code>SubagentStop</code></td><td>thinking</td></tr>
                         <tr><td><code>PreCompact</code></td><td>packing</td></tr>
                         <tr><td><code>PostCompact</code></td><td>thinking</td></tr>
                         <tr><td><code>Stop</code></td><td>done</td></tr>
                     </tbody>
                 </table>
+                <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>PreToolUse</code>, <code>PermissionRequest</code>, and <code>PostToolUse</code> are registered with a <code>Bash</code>-only matcher (see <code>docs/codex/hooks.json</code>), so non-Bash tool calls (Read, Edit, etc.) don't trigger a state change.</p>
                 <p>Codex hooks are experimental, and Windows support is currently disabled for hooks.</p>
 
                 <h3>Kiro IDE</h3>
