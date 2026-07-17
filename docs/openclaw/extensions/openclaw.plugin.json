@@ -15,7 +15,7 @@
       "character": {
         "type": "string",
         "default": "claw",
-        "description": "Character to display (vibemon, clawd, kiro, claw, daangni)"
+        "description": "Character to display (vibemon, clawd, codex, kiro, claw, daangni)"
       },
       "serialEnabled": {
         "type": "boolean",

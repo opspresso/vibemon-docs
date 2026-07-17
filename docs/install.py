@@ -9,6 +9,8 @@ Usage (Interactive):
 Usage (Non-interactive for AI agents):
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --codex
+  curl -fsSL https://docs.vibemon.io/install.py | python3 - --kiro
+  curl -fsSL https://docs.vibemon.io/install.py | python3 - --openclaw
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token YOUR_TOKEN
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
 """

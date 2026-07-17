@@ -372,7 +372,7 @@ Merge the following into your existing `~/.codex/hooks.json`:
 ```
 
 **Notes:**
-- Codex hooks are experimental as of 2026-04-23
+- Codex hooks are experimental
 - Official docs currently state Windows support is disabled for hooks
 - Restart your Codex session after updating config files
 

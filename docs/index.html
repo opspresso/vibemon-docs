@@ -574,7 +574,13 @@ echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/ttyACM0</
     "project": "my-project",
     "model": "opus",
     "memory": 45,
-    "character": "clawd"
+    "character": "clawd",
+    "usage5h": 36,
+    "usageWeek": 37,
+    "usage5hResetsIn": 154,
+    "usageWeekResetsIn": 4381,
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z"
   }
 }
 
@@ -601,7 +607,7 @@ echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/ttyACM0</
                     <tbody>
                         <tr><td><code>state</code></td><td>string</td><td>start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required)</td></tr>
                         <tr><td><code>project</code></td><td>string</td><td>Project name (required)</td></tr>
-                        <tr><td><code>character</code></td><td>string</td><td>vibemon (default), clawd, codex, kiro, claw, or daangni (required); an unrecognized value falls back to vibemon rather than being rejected. daangni is manual selection only (no tool maps to it)</td></tr>
+                        <tr><td><code>character</code></td><td>string</td><td>vibemon, clawd, codex, kiro, claw, or daangni (required; an unrecognized value falls back to vibemon rather than being rejected). daangni is manual selection only (no tool maps to it)</td></tr>
                         <tr><td><code>tool</code></td><td>string</td><td>Tool name (Bash, Read, Edit, etc.) (optional)</td></tr>
                         <tr><td><code>model</code></td><td>string</td><td>Model name (opus, sonnet, etc.) (optional)</td></tr>
                         <tr><td><code>memory</code></td><td>number</td><td>Context window usage 0-100 (optional)</td></tr>

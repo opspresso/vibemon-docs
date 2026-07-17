@@ -94,7 +94,7 @@ Note that the plan-usage fields (`usage5h`/`usageWeek` and their reset countdown
 
 ### Codex Configuration
 
-Codex uses the same `~/.vibemon/config.json` as Claude Code and Kiro. Enable Codex hooks in `~/.codex/config.toml`:
+Codex uses the same `~/.vibemon/config.json` as Claude Code, Kiro, and the OpenClaw plugin. Enable Codex hooks in `~/.codex/config.toml`:
 
 ```toml
 [features]
@@ -226,7 +226,13 @@ Message types:
     "project": "my-project",
     "model": "opus",
     "memory": 45,
-    "character": "clawd"
+    "character": "clawd",
+    "usage5h": 36,
+    "usageWeek": 37,
+    "usage5hResetsIn": 154,
+    "usageWeekResetsIn": 4381,
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z"
   }
 }
 
@@ -257,7 +263,7 @@ curl -X POST https://vibemon.io/api/status \
 |-------|------|-------------|
 | `state` | string | start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required) |
 | `project` | string | Project name (required) |
-| `character` | string | vibemon (default), clawd, codex, kiro, claw, or daangni (required); an unrecognized value falls back to vibemon rather than being rejected. daangni is manual selection only (no tool maps to it) |
+| `character` | string | vibemon, clawd, codex, kiro, claw, or daangni (required; an unrecognized value falls back to vibemon rather than being rejected). daangni is manual selection only (no tool maps to it) |
 | `tool` | string | Tool name (Bash, Read, Edit, etc.) (optional) |
 | `model` | string | Model name (opus, sonnet, etc.) (optional) |
 | `memory` | number | Context window usage 0-100 (optional) |
