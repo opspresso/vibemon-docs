@@ -16,6 +16,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+
 VIBEMON_HOME = Path.home() / ".vibemon"
 if str(VIBEMON_HOME) not in sys.path:
     sys.path.insert(0, str(VIBEMON_HOME))
