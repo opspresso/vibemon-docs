@@ -66,26 +66,6 @@
             transform: translateY(-2px);
             box-shadow: 0 4px 20px rgba(255, 107, 53, 0.4);
         }
-        .install-cmd {
-            margin-top: 2rem;
-            background: rgba(0, 0, 0, 0.3);
-            padding: 1rem 1.5rem;
-            border-radius: 8px;
-            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-            font-size: 0.875rem;
-            color: #68d391;
-            cursor: pointer;
-            transition: background 0.2s;
-            text-align: left;
-            overflow-x: auto;
-        }
-        .install-cmd:hover {
-            background: rgba(0, 0, 0, 0.4);
-        }
-        .install-cmd::before {
-            content: '$ ';
-            color: #a0aec0;
-        }
         .characters {
             margin-top: 3rem;
             display: flex;
@@ -121,15 +101,123 @@
             font-size: 0.75rem;
             color: #4a5568;
         }
-        .ai-agent-note {
-            margin-top: 1rem;
-            padding: 0.75rem 1.25rem;
+        .install-card {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background: rgba(247, 147, 30, 0.05);
+            border: 1px solid rgba(247, 147, 30, 0.5);
+            border-radius: 16px;
+        }
+        .install-tabs {
+            display: inline-flex;
+            padding: 0.25rem;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+            margin-bottom: 0.75rem;
+        }
+        .install-tab {
+            padding: 0.375rem 1rem;
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            color: #a0aec0;
+            font-family: inherit;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+        }
+        .install-tab.active {
+            background: linear-gradient(90deg, #ff6b35, #f7931e);
+            color: #fff;
+        }
+        .install-cmd-block {
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 0.75rem;
+            color: #68d391;
+            margin-bottom: 0.75rem;
+            overflow-x: auto;
+        }
+        .cmd-prompt {
+            color: #a0aec0;
+        }
+        .ai-agent-card {
+            margin-top: 1.5rem;
+            padding: 1.5rem;
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 12px;
+            border-radius: 16px;
+            transition: border-color 0.2s;
         }
-        .ai-agent-note p {
-            margin: 0;
+        .ai-agent-card:hover {
+            border-color: rgba(247, 147, 30, 0.5);
+        }
+        .card-emoji {
+            font-size: 2.25rem;
+            margin-bottom: 0.5rem;
+        }
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+        .card-desc {
+            font-size: 0.875rem;
+            color: #a0aec0;
+            margin-bottom: 1rem;
+        }
+        .ai-agent-prompt {
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            text-align: left;
+            margin-bottom: 0.75rem;
+        }
+        .ai-agent-prompt-label {
+            font-size: 0.75rem;
+            color: #a0aec0;
+            margin-bottom: 0.5rem;
+        }
+        .ai-agent-prompt code {
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 0.75rem;
+            color: #68d391;
+            word-break: break-all;
+        }
+        .card-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .card-btn {
+            flex: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: transparent;
+            color: #fff;
+            font-family: inherit;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .card-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .card-note {
+            font-size: 0.75rem;
+            color: #a0aec0;
+            margin-top: 0.75rem;
+            margin-bottom: 0;
         }
         .live-display {
             margin: 2rem auto 0;
@@ -320,20 +408,60 @@
             Go to VibeMon.io
         </a>
 
-        <div class="install-cmd" onclick="navigator.clipboard.writeText('brew tap opspresso/tap\nbrew install opspresso/tap/vibemon')">
-            brew tap opspresso/tap<br><span style="color:#a0aec0;">$ </span>brew install opspresso/tap/vibemon
+        <div class="install-card">
+            <div class="card-emoji">💻</div>
+            <div class="card-title">Install the VibeMon App</div>
+            <p class="card-desc">Recommended — desktop viewer that also sets up your AI tools for you</p>
+            <div class="install-tabs">
+                <button class="install-tab active" data-os="mac" onclick="selectInstallOs('mac')">macOS</button>
+                <button class="install-tab" data-os="windows" onclick="selectInstallOs('windows')">Windows</button>
+            </div>
+            <div class="install-panel" data-os="mac">
+                <div class="install-cmd-block"><span class="cmd-prompt">$ </span>brew tap opspresso/tap<br><span class="cmd-prompt">$ </span>brew install opspresso/tap/vibemon</div>
+                <div class="card-actions">
+                    <button class="card-btn" onclick="navigator.clipboard.writeText('brew tap opspresso/tap\nbrew install opspresso/tap/vibemon'); this.textContent = 'Copied!'; setTimeout(() => { this.textContent = 'Copy'; }, 2000)">Copy</button>
+                    <a class="card-btn" href="https://github.com/opspresso/vibemon-app/releases/latest" target="_blank" rel="noopener noreferrer">Download .dmg</a>
+                    <a class="card-btn" href="https://github.com/opspresso/vibemon-app" target="_blank" rel="noopener noreferrer">Learn more</a>
+                </div>
+                <p class="card-note">Install with Homebrew, or download the .dmg from the latest release.</p>
+            </div>
+            <div class="install-panel" data-os="windows" hidden>
+                <div class="card-actions">
+                    <a class="card-btn" href="https://github.com/opspresso/vibemon-app/releases/latest" target="_blank" rel="noopener noreferrer">Download Setup (.exe)</a>
+                    <a class="card-btn" href="https://github.com/opspresso/vibemon-app" target="_blank" rel="noopener noreferrer">Learn more</a>
+                </div>
+                <p class="card-note">Download <strong>VibeMon-Setup-x.x.x.exe</strong> from the latest release and run it.</p>
+            </div>
+            <p class="card-note">Then open <strong>Settings &gt; AI Tools</strong> to connect Claude Code, Codex, Kiro, or OpenClaw with one click.</p>
         </div>
 
-        <p class="description" style="margin-top: 1rem; margin-bottom: 0; font-size: 0.9rem;">
-            Then open <strong>Settings &gt; AI Tools</strong> in the app to install hooks for Claude Code, Codex, Kiro, or OpenClaw with one click.
-        </p>
-
-        <div class="ai-agent-note">
-            <p class="description" style="font-size: 0.85rem;">
-                Are you an AI agent? Read <a href="./setup.md">setup.md</a>, or run <code>curl -fsSL https://docs.vibemon.io/install.py | python3</code> directly.
-            </p>
+        <div class="ai-agent-card">
+            <div class="card-emoji">🤖</div>
+            <div class="card-title">I'm an AI Agent</div>
+            <p class="card-desc">I want to connect to VibeMon and send my status</p>
+            <div class="ai-agent-prompt">
+                <p class="ai-agent-prompt-label">Tell your AI agent:</p>
+                <code>Read https://docs.vibemon.io/setup.md and follow the instructions to join VibeMon</code>
+            </div>
+            <div class="card-actions">
+                <button class="card-btn" onclick="navigator.clipboard.writeText('Read https://docs.vibemon.io/setup.md and follow the instructions to join VibeMon'); this.textContent = 'Copied!'; setTimeout(() => { this.textContent = 'Copy'; }, 2000)">Copy</button>
+                <a class="card-btn" href="./setup.md" target="_blank" rel="noopener noreferrer">Setup Guide</a>
+            </div>
         </div>
     </div>
+
+    <script>
+        function selectInstallOs(os) {
+            document.querySelectorAll('.install-tab').forEach((tab) => {
+                tab.classList.toggle('active', tab.dataset.os === os);
+            });
+            document.querySelectorAll('.install-panel').forEach((panel) => {
+                panel.hidden = panel.dataset.os !== os;
+            });
+        }
+        // Select the install tab matching the visitor's OS
+        if (/Win/i.test(navigator.userAgent)) selectInstallOs('windows');
+    </script>
 
     <script type="module">
         // Live character preview, mirroring vibemon-static's hero: the engine,
