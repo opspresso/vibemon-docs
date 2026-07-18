@@ -240,9 +240,16 @@ def get_project_name(cwd: str, transcript_path: str) -> str:
 
 def get_state(
     event_name: str, permission_mode: str, event_state_map: dict[str, str]
-) -> str:
-    """Map event name to state, considering permission mode."""
-    state = event_state_map.get(event_name, "working")
+) -> str | None:
+    """Map event name to state, considering permission mode.
+
+    Returns None for events outside the tool's map — e.g. a hook registration
+    left behind by an older install — so the caller can skip reporting
+    instead of guessing a state.
+    """
+    state = event_state_map.get(event_name)
+    if state is None:
+        return None
 
     if permission_mode == "plan" and state in ("thinking", "working"):
         return "planning"
@@ -1021,6 +1028,9 @@ def run(
 
     project_name = get_project_name(cwd, transcript_path)
     state = get_state(event_name, permission_mode, event_state_map)
+    if state is None:
+        debug_log(f"Event not mapped, skipping: {event_name}")
+        return
 
     debug_log(f"Event: {event_name}, Tool: {tool_name}, Project: {project_name}")
 

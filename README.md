@@ -306,16 +306,13 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 |-------|-------|
 | SessionStart | start |
 | UserPromptSubmit | thinking |
-| PreToolUse (Bash only) | working |
+| PreToolUse | working |
 | SubagentStart | working |
-| PermissionRequest (Bash only) | notification |
-| PostToolUse (Bash only) | thinking |
-| SubagentStop | thinking |
+| PermissionRequest | notification |
 | PreCompact | packing |
-| PostCompact | thinking |
 | Stop | done |
 
-`PreToolUse`, `PermissionRequest`, and `PostToolUse` are registered with a `Bash`-only matcher (see `docs/codex/hooks.json`), so non-Bash tool calls (Read, Edit, etc.) don't trigger a state change.
+`PreToolUse` and `PermissionRequest` are registered without a matcher, so every tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools) triggers a state change. Codex has no `SessionEnd` event; `Stop` (end of turn) is the terminal signal.
 
 Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported.
 
@@ -327,7 +324,6 @@ Codex hooks are experimental, and Codex CLI's own hooks documentation currently 
 | promptSubmit / userPromptSubmit | thinking |
 | fileCreated / fileEdited / fileDeleted | working |
 | preToolUse | working |
-| postToolUse | thinking |
 | agentStop / stop | done |
 
 ### OpenClaw
@@ -335,9 +331,9 @@ Codex hooks are experimental, and Codex CLI's own hooks documentation currently 
 | Event | State |
 |-------|-------|
 | gateway_start | start |
-| before_agent_start | thinking |
+| before_agent_run (fallback: before_agent_start) | thinking |
 | before_tool_call | working |
-| after_tool_call | thinking |
+| subagent_spawned | working |
 | message_sent / agent_end | done (3s delay) |
 | session_end / gateway_stop | done |
 

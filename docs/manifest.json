@@ -2,17 +2,17 @@
   "files": {
     "vibemon/usage.py": "9d8df45a726736a4687d67e60273e7352eeff4d0cd5926996515d35d2a633c87",
     "vibemon/usage_cache.py": "275377036feb85319be502350547fed8e94fc980d97ad6c384f1ceaa1b6af5e4",
-    "vibemon/vibemon_core.py": "ecfde0d8f3cb3c05efd4e02eb679db02c2204d1122b431b9949a2c1a21d593b3",
+    "vibemon/vibemon_core.py": "adff0a1af5fd35711f0277a427e0286943349e3ee7fe79f3eb781c3ab2c936ca",
     "claude/statusline.py": "112ed76e8ef32ecd42ffa0fb5cfbad88f67bcdea7e7870c6b13ac9e53159db30",
     "claude/hooks/vibemon.py": "741fc8b2146f28068fcf65c54af51261b2d59deea5833afb3cba919edd6e0a15",
-    "codex/hooks/vibemon.py": "22a076b0fe2817bf6cbdc944a0971f2606aa50f6d22fff2a0dae8d3274f2d31c",
-    "kiro/hooks/vibemon.py": "b78bab6b7834734624a757a94abe8b9dad7b077f0f3b19fa603778b6c96fca1f",
+    "codex/hooks/vibemon.py": "3848402440ac73925ddbc190b3568382fe3f00345f9d4060505e697c14d66349",
+    "kiro/hooks/vibemon.py": "d7a4e57fb8562bd77cadad59a4bc5449c8b37c1c9f444d669dcffddb3e62ca14",
     "kiro/hooks/vibemon-prompt-submit.kiro.hook": "f129ef3c357d92a07e505f792245fc1cad6b45b0090c05b6aeb7ac0cbe16a18f",
     "kiro/hooks/vibemon-agent-stop.kiro.hook": "586bb9e7b44cecbbc7e6849bd5e3af0df8c8be07659bc4a59753b4531d9e7a2b",
     "kiro/hooks/vibemon-file-created.kiro.hook": "08f619f150a6dc2ee957f59760907da3a8fc01bc5747e3f2341f9a263ee22f2c",
     "kiro/hooks/vibemon-file-edited.kiro.hook": "301ffaf337581ac340b6caf51318f9fcdfa1cb95bcb1af904585eb5b31de5fa2",
     "kiro/hooks/vibemon-file-deleted.kiro.hook": "61e805148fe30bece904deb16868e7237dd1b339bbec587a347c0730d0bd6e84",
-    "openclaw/extensions/index.mjs": "b78b0af82bf178f73858c84ee2b8c278ee18e6ae546bad6273dba0194049eb55",
-    "openclaw/extensions/openclaw.plugin.json": "2956b56e6d4b184f38988a63fdd36620e8de499cd3a53ca164c4828a29317b86"
+    "openclaw/extensions/index.mjs": "0d48280e9c9a7ab395ea5584e24e81e0372e0ae4482245dfabab52587d4510ee",
+    "openclaw/extensions/openclaw.plugin.json": "8ba9ebaba231e7ef97ceebc0f38b927b46eb057b7584c2bf7b4e59be11402a0e"
   }
 }

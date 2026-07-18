@@ -5,9 +5,9 @@
  * This is more reliable than log-based monitoring.
  *
  * Hooks used:
- * - before_agent_start -> thinking
+ * - before_agent_run (fallback: deprecated before_agent_start) -> thinking
  * - before_tool_call -> working (with tool name)
- * - after_tool_call -> thinking
+ * - subagent_spawned -> working
  * - message_sent -> done (with delay to prevent premature transition)
  * - gateway_start -> start
  *
@@ -598,7 +598,7 @@ const plugin = {
   id: "vibemon-bridge",
   name: "VibeMon Bridge",
   description: "Real-time status bridge for VibeMon (ESP32/Desktop)",
-  version: "1.1.0",
+  version: "1.2.0",
 
   register(api) {
     logger = api.logger;
@@ -640,11 +640,23 @@ const plugin = {
       sendStatus("start", { note: "gateway_started" });
     });
 
-    // Before agent starts -> thinking
-    api.on("before_agent_start", (event, ctx) => {
+    // Agent turn begins -> thinking. before_agent_run is the current phase
+    // hook; before_agent_start is its deprecated predecessor, kept so older
+    // gateways still report. Duplicate fires coalesce in sendStatus's
+    // same-state debounce.
+    const onAgentTurnStart = (event, ctx) => {
       cancelDoneTimer();
-      debug(`Agent starting (prompt: ${event.prompt?.slice(0, 50)}...) -> thinking`);
+      debug("Agent turn starting -> thinking");
       sendStatus("thinking");
+    };
+    api.on("before_agent_run", onAgentTurnStart);
+    api.on("before_agent_start", onAgentTurnStart);
+
+    // Subagent spawned -> working (mirrors SubagentStart on Claude/Codex)
+    api.on("subagent_spawned", (event, ctx) => {
+      cancelDoneTimer();
+      debug("Subagent spawned -> working");
+      sendStatus("working");
     });
 
     // Before tool call -> working
@@ -653,18 +665,6 @@ const plugin = {
       const toolName = event.toolName || ctx.toolName || "unknown";
       debug(`Tool call: ${toolName} -> working`);
       sendStatus("working", { tool: toolName });
-    });
-
-    // After tool call -> back to thinking
-    api.on("after_tool_call", (event, ctx) => {
-      // Don't cancel done timer here - we want to keep it if message was sent
-      const toolName = event.toolName || ctx.toolName || "unknown";
-      debug(`Tool done: ${toolName} -> thinking`);
-
-      // Only go back to thinking if not waiting for done
-      if (!doneTimer) {
-        sendStatus("thinking");
-      }
     });
 
     // Context-window usage (best-effort; exact fields vary by OpenClaw

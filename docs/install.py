@@ -354,6 +354,48 @@ def merge_hooks(existing: dict, new_hooks: dict) -> dict:
     return result
 
 
+def _is_vibemon_hook(hook: dict) -> bool:
+    """True when a hook entry runs a VibeMon script (Claude/Codex or Kiro format)."""
+    if "vibemon.py" in hook.get("command", ""):
+        return True
+    return any("vibemon.py" in arg for arg in hook.get("args", []))
+
+
+def remove_stale_vibemon_hooks(existing: dict, new_hooks: dict) -> list:
+    """Drop VibeMon hook registrations under events the packaged config no
+    longer uses (e.g. Codex PostToolUse). Leaving them would keep invoking
+    vibemon.py with events the script no longer maps. Only VibeMon's own
+    entries are touched; user hooks under the same events are preserved.
+    Mutates `existing` and returns the list of cleaned event names.
+    """
+    removed_events = []
+    for event in list(existing.keys()):
+        if event in new_hooks:
+            continue
+        cleaned_entries = []
+        changed = False
+        for entry in existing[event]:
+            if "hooks" in entry:
+                kept = [h for h in entry.get("hooks", []) if not _is_vibemon_hook(h)]
+                if len(kept) != len(entry.get("hooks", [])):
+                    changed = True
+                    if kept:
+                        cleaned_entries.append({**entry, "hooks": kept})
+                else:
+                    cleaned_entries.append(entry)
+            elif _is_vibemon_hook(entry):
+                changed = True
+            else:
+                cleaned_entries.append(entry)
+        if changed:
+            removed_events.append(event)
+            if cleaned_entries:
+                existing[event] = cleaned_entries
+            else:
+                del existing[event]
+    return removed_events
+
+
 def merge_kiro_hooks(existing: dict, new_hooks: dict) -> dict:
     """Merge new hooks into existing hooks configuration (Kiro format)."""
     result = {}
@@ -540,6 +582,11 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
         existing_settings = load_json_or_backup(settings_file)
 
         if "hooks" in existing_settings:
+            stale = remove_stale_vibemon_hooks(
+                existing_settings["hooks"], new_settings["hooks"]
+            )
+            if stale:
+                print(f"  {colored('✓', 'green')} removed unused VibeMon hooks: {', '.join(stale)}")
             existing_settings["hooks"] = merge_hooks(
                 existing_settings["hooks"], new_settings["hooks"]
             )
@@ -640,6 +687,9 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
 
         existing_map = existing_hooks.get("hooks", {})
         new_map = new_hooks.get("hooks", {})
+        stale = remove_stale_vibemon_hooks(existing_map, new_map)
+        if stale:
+            print(f"  {colored('✓', 'green')} removed unused VibeMon hooks: {', '.join(stale)}")
         existing_hooks["hooks"] = merge_hooks(existing_map, new_map)
         hooks_file.write_text(json.dumps(existing_hooks, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} hooks merged into ~/.codex/hooks.json")
@@ -700,6 +750,11 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
         existing_agent = load_json_or_backup(agent_file)
 
         if "hooks" in existing_agent:
+            stale = remove_stale_vibemon_hooks(
+                existing_agent["hooks"], new_agent["hooks"]
+            )
+            if stale:
+                print(f"  {colored('✓', 'green')} removed unused VibeMon hooks: {', '.join(stale)}")
             existing_agent["hooks"] = merge_kiro_hooks(
                 existing_agent["hooks"], new_agent["hooks"]
             )

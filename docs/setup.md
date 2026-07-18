@@ -276,17 +276,6 @@ Merge the following into your existing `~/.codex/hooks.json`:
         ]
       }
     ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: subagent done"
-          }
-        ]
-      }
-    ],
     "PreCompact": [
       {
         "hooks": [
@@ -294,17 +283,6 @@ Merge the following into your existing `~/.codex/hooks.json`:
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
             "statusMessage": "VibeMon: compacting"
-          }
-        ]
-      }
-    ],
-    "PostCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: compact done"
           }
         ]
       }
@@ -322,36 +300,22 @@ Merge the following into your existing `~/.codex/hooks.json`:
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: bash start"
+            "statusMessage": "VibeMon: tool start"
           }
         ]
       }
     ],
     "PermissionRequest": [
       {
-        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
             "statusMessage": "VibeMon: approval needed"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: bash finished"
           }
         ]
       }
@@ -409,9 +373,6 @@ Merge the following hooks into your existing `~/.kiro/agents/default.json`:
     "preToolUse": [
       { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "preToolUse"] }
     ],
-    "postToolUse": [
-      { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "postToolUse"] }
-    ],
     "stop": [
       { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "agentStop"] }
     ]
@@ -458,7 +419,7 @@ Merge the following into your existing `~/.openclaw/openclaw.json`. OpenClaw doe
 }
 ```
 
-`hooks.allowConversationAccess` is required for OpenClaw to let a non-bundled plugin register conversation hooks (`agent_end`); without it OpenClaw silently blocks them.
+`hooks.allowConversationAccess` is required for OpenClaw to let a non-bundled plugin register conversation hooks (`before_agent_run`, `agent_end`); without it OpenClaw silently blocks them.
 
 Transmission settings (`http_urls`, `serial_port`, `vibemon_url`, `vibemon_token`) are read from the shared `~/.vibemon/config.json` (Step 1). To override them for OpenClaw only, add a `config` object to the entry with `httpEnabled`, `httpUrls`, `serialEnabled`, `vibemonUrl`, or `vibemonToken` — plugin config always wins over the shared file.
 

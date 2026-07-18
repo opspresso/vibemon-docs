@@ -29,15 +29,6 @@
         ]
       }
     ],
-    "postToolUse": [
-      {
-        "command": "python3",
-        "args": [
-          "~/.kiro/hooks/vibemon.py",
-          "postToolUse"
-        ]
-      }
-    ],
     "stop": [
       {
         "command": "python3",
