@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 Regenerate docs/manifest.json — the sha256 manifest of every file install.py
-copies verbatim into the user's home directory. The VibeMon Desktop app
-fetches this manifest periodically and compares the hashes against the
-installed local files to detect out-of-date scripts.
+copies verbatim into the user's home directory, plus the sha256 of install.py
+itself (the "installer" key). The VibeMon Desktop app fetches this manifest
+periodically and compares the hashes against the installed local files to
+detect out-of-date scripts, and verifies the downloaded install.py against
+the installer hash before running it.
 
 Merged config files (claude/settings.json, codex/hooks.json, codex/config.toml,
 kiro/agents/default.json) are excluded: their installed form is merged with
@@ -44,7 +46,10 @@ def file_sha256(path: Path) -> str:
 
 
 def build_manifest() -> dict:
-    return {"files": {rel: file_sha256(DOCS_DIR / rel) for rel in MANIFEST_FILES}}
+    return {
+        "installer": file_sha256(DOCS_DIR / "install.py"),
+        "files": {rel: file_sha256(DOCS_DIR / rel) for rel in MANIFEST_FILES},
+    }
 
 
 def main():
