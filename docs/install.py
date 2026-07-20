@@ -174,7 +174,14 @@ def load_or_create_config(config_path: Path, example_content: str, fallback: dic
             with open(config_path) as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            pass
+            # Back up the corrupted file before the defaults below get
+            # saved over it — it may hold a hand-edited vibemon_token.
+            backup_path = config_path.with_name(config_path.name + ".bak")
+            try:
+                backup_path.write_text(config_path.read_text())
+                print(f"  {colored('!', 'yellow')} {config_path.name} had invalid JSON, backed up to {backup_path.name}")
+            except OSError as e:
+                print(f"  {colored('✗', 'red')} Failed to back up {config_path.name}: {e}")
 
     # Parse example content
     try:
