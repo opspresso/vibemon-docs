@@ -345,6 +345,6 @@ Codex hooks are experimental, and Codex CLI's own hooks documentation currently 
 
 ## Related Projects
 
-- [vibemon](https://github.com/opspresso/vibemon) - Cloud dashboard & API ([vibemon.io](https://vibemon.io))
+- [vibemon-web](https://github.com/opspresso/vibemon-web) - Cloud dashboard & API ([vibemon.io](https://vibemon.io))
 - [vibemon-app](https://github.com/opspresso/vibemon-app) - Desktop App & ESP32 hardware client
 - [vibemon-static](https://github.com/opspresso/vibemon-static) - Static assets & embeddable rendering engine ([static.vibemon.io](https://static.vibemon.io))
