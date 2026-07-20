@@ -40,6 +40,31 @@ def run_hook(event: dict, argv: list[str] | None = None) -> list[dict]:
     return sent
 
 
+class UsageFieldsTest(unittest.TestCase):
+    def test_usage_fields_include_model_scoped_week(self):
+        with patch.object(vibemon_core.time, "time", return_value=1000):
+            fields = vibemon_core._usage_fields({
+                "session": {"pct": 5, "resets_at": 1600},
+                "week_all": {"pct": 7, "resets_at": 7000},
+                "week_fable": {"pct": 12, "resets_at": 7000, "label": "Fable"},
+            })
+
+        self.assertEqual(fields["usage5h"], 5)
+        self.assertEqual(fields["usageWeek"], 7)
+        self.assertEqual(fields["usageWeekModel"], 12)
+        self.assertEqual(fields["usageWeekModelResetsIn"], 100)
+        self.assertEqual(fields["usageWeekModelLabel"], "Fable")
+
+    def test_usage_fields_omit_model_week_when_absent(self):
+        fields = vibemon_core._usage_fields({
+            "session": {"pct": 5},
+            "week_all": {"pct": 7},
+        })
+
+        self.assertNotIn("usageWeekModel", fields)
+        self.assertNotIn("usageWeekModelLabel", fields)
+
+
 class VibemonHomeGuardTest(unittest.TestCase):
     def test_session_in_vibemon_home_is_not_reported(self):
         vibemon_home = os.path.expanduser("~/.vibemon")

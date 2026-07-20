@@ -25,7 +25,7 @@ from typing import Any, Callable
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from usage_cache import get_fresh_provider, load_usage_cache
+from usage_cache import get_fresh_provider, load_usage_cache, model_week_bucket
 
 try:
     import fcntl
@@ -311,8 +311,11 @@ def _load_usage_provider(provider: str) -> dict[str, Any] | None:
 
 
 def _usage_fields(bucket_data: dict[str, Any] | None) -> dict[str, Any]:
-    """Build {usage5h, usageWeek, usage5hResetsIn, usageWeekResetsIn} from a
-    provider's `{session, week_all}` cache entry. The ResetsIn fields
+    """Build {usage5h, usageWeek, usage5hResetsIn, usageWeekResetsIn,
+    usageWeekModel, usageWeekModelResetsIn, usageWeekModelLabel} from a
+    provider's `{session, week_all, week_<model>}` cache entry. The
+    usageWeekModel* fields carry the model-scoped weekly limit (e.g. the
+    Fable weekly bucket) when the plan has one. The ResetsIn fields
     (minutes until reset) are included only when the entry has a `resets_at`
     epoch. Keys are omitted when a value is unavailable, so the API can
     remove stale values instead of overwriting them with 0.
@@ -333,6 +336,15 @@ def _usage_fields(bucket_data: dict[str, Any] | None) -> dict[str, Any]:
         resets_in = _resets_in_minutes(week)
         if resets_in is not None:
             result["usageWeekResetsIn"] = resets_in
+    model_week = model_week_bucket(bucket_data)
+    if model_week is not None:
+        result["usageWeekModel"] = model_week["pct"]
+        resets_in = _resets_in_minutes(model_week)
+        if resets_in is not None:
+            result["usageWeekModelResetsIn"] = resets_in
+        label = model_week.get("label")
+        if isinstance(label, str) and label:
+            result["usageWeekModelLabel"] = label
     return result
 
 
@@ -572,7 +584,8 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
     API: POST /api/status
     Headers: Authorization: Bearer <token>, Content-Type: application/json
     Body: { state, project, tool, model, memory, character,
-            usage5h?, usageWeek?, usage5hResetsIn?, usageWeekResetsIn? }
+            usage5h?, usageWeek?, usage5hResetsIn?, usageWeekResetsIn?,
+            usageWeekModel?, usageWeekModelResetsIn?, usageWeekModelLabel? }
     """
     try:
         api_url = f"{url.rstrip('/')}/api/status"
@@ -587,7 +600,15 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
         }
         # Plan-usage fields are optional; include only when available so the API
         # REMOVEs stale values instead of overwriting them with 0.
-        for key in ("usage5h", "usageWeek", "usage5hResetsIn", "usageWeekResetsIn"):
+        for key in (
+            "usage5h",
+            "usageWeek",
+            "usage5hResetsIn",
+            "usageWeekResetsIn",
+            "usageWeekModel",
+            "usageWeekModelResetsIn",
+            "usageWeekModelLabel",
+        ):
             if key in payload:
                 api_body[key] = payload[key]
         api_payload = json.dumps(api_body)

@@ -49,6 +49,7 @@ from usage_cache import (
     parse_epoch,
     parse_usage_output,
     save_usage_cache as _save_usage_cache,
+    week_bucket_key,
 )
 
 try:
@@ -155,8 +156,9 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
     needs no active session and returns an exact reset timestamp.
 
     Returns the same shape as parse_usage_output() (`session`/`week_all`
-    entries with `pct` and `resets_at`), or None if a token isn't available,
-    the request fails, or the response doesn't look like a usage payload.
+    entries with `pct` and `resets_at`, plus model-scoped weekly buckets like
+    `week_fable` with a `label`), or None if a token isn't available, the
+    request fails, or the response doesn't look like a usage payload.
     """
     token = read_claude_token()
     if not token:
@@ -190,16 +192,48 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
             entry["resets_at"] = resets_at
         return entry
 
-    session = _window(data.get("five_hour"))
-    week = _window(data.get("seven_day"))
-    if session is None and week is None:
-        return None
-
     result: dict[str, Any] = {}
-    if session is not None:
-        result["session"] = session
-    if week is not None:
-        result["week_all"] = week
+
+    # The limits[] array is the authoritative shape: it carries the session
+    # and weekly-all buckets plus model-scoped weekly limits (kind
+    # "weekly_scoped" with scope.model.display_name, e.g. "Fable") that the
+    # legacy top-level fields don't expose.
+    limits = data.get("limits")
+    if isinstance(limits, list):
+        for item in limits:
+            if not isinstance(item, dict):
+                continue
+            pct = normalize_percent(item.get("percent"))
+            if pct is None:
+                continue
+            entry: dict[str, Any] = {"pct": pct}
+            resets_at = parse_epoch(item.get("resets_at"))
+            if resets_at is not None:
+                entry["resets_at"] = resets_at
+            kind = item.get("kind")
+            if kind == "session":
+                result["session"] = entry
+            elif kind == "weekly_all":
+                result["week_all"] = entry
+            elif kind == "weekly_scoped":
+                scope = item.get("scope")
+                model = scope.get("model") if isinstance(scope, dict) else None
+                label = model.get("display_name") if isinstance(model, dict) else None
+                key = week_bucket_key(label)
+                if key:
+                    result[key] = {**entry, "label": str(label).strip()}
+
+    if "session" not in result:
+        session = _window(data.get("five_hour"))
+        if session is not None:
+            result["session"] = session
+    if "week_all" not in result:
+        week = _window(data.get("seven_day"))
+        if week is not None:
+            result["week_all"] = week
+
+    if not result:
+        return None
     return result
 
 

@@ -12,7 +12,61 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "docs" / "vibemon"))
 import usage  # noqa: E402
 
 
+def _fake_urlopen(payload):
+    class _Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.close()
+
+    return lambda *args, **kwargs: _Response(json.dumps(payload).encode())
+
+
 class UsageTest(unittest.TestCase):
+    def test_claude_live_usage_parses_limits_array(self):
+        payload = {
+            "five_hour": {"utilization": 5.0, "resets_at": "2026-07-20T06:10:00+00:00"},
+            "seven_day": {"utilization": 7.0, "resets_at": "2026-07-24T17:00:00+00:00"},
+            "seven_day_opus": None,
+            "limits": [
+                {"kind": "session", "percent": 5, "resets_at": "2026-07-20T06:10:00+00:00"},
+                {"kind": "weekly_all", "percent": 7, "resets_at": "2026-07-24T17:00:00+00:00"},
+                {
+                    "kind": "weekly_scoped",
+                    "percent": 12,
+                    "resets_at": "2026-07-24T17:00:00+00:00",
+                    "scope": {"model": {"id": None, "display_name": "Fable"}},
+                },
+            ],
+        }
+        with (
+            patch.object(usage, "read_claude_token", return_value="token"),
+            patch.object(usage.urllib.request, "urlopen", _fake_urlopen(payload)),
+        ):
+            result = usage.fetch_claude_usage_live()
+
+        self.assertEqual(result["session"]["pct"], 5)
+        self.assertEqual(result["week_all"]["pct"], 7)
+        self.assertEqual(result["week_fable"]["pct"], 12)
+        self.assertEqual(result["week_fable"]["label"], "Fable")
+        self.assertIn("resets_at", result["week_fable"])
+
+    def test_claude_live_usage_falls_back_to_legacy_buckets(self):
+        payload = {
+            "five_hour": {"utilization": 5.0, "resets_at": "2026-07-20T06:10:00+00:00"},
+            "seven_day": {"utilization": 7.0, "resets_at": "2026-07-24T17:00:00+00:00"},
+        }
+        with (
+            patch.object(usage, "read_claude_token", return_value="token"),
+            patch.object(usage.urllib.request, "urlopen", _fake_urlopen(payload)),
+        ):
+            result = usage.fetch_claude_usage_live()
+
+        self.assertEqual(result["session"]["pct"], 5)
+        self.assertEqual(result["week_all"]["pct"], 7)
+        self.assertNotIn("week_fable", result)
+
     def test_codex_windows_are_classified_by_duration(self):
         self.assertEqual(usage._codex_window_kind({"window_minutes": 300}), "session")
         self.assertEqual(usage._codex_window_kind({"window_minutes": 10080}), "week_all")

@@ -28,6 +28,7 @@ if str(VIBEMON_HOME) not in sys.path:
 from usage_cache import (  # noqa: E402
     apply_session_floor,
     load_usage_cache as _load_usage_cache,
+    model_week_bucket,
     save_usage_cache as _save_usage_cache,
     usage_from_rate_limits,
 )
@@ -710,7 +711,11 @@ def save_usage_cache(usage: dict[str, Any]) -> bool:
 
 
 def build_usage_segment(cache: dict[str, Any] | None) -> str:
-    """Render the plan-usage segment: 📊 S <bar> W <bar>."""
+    """Render the plan-usage segment: 📊 S <bar> W <bar> [F <bar>].
+
+    The trailing bar is the model-scoped weekly limit (e.g. the Fable
+    weekly bucket), labeled with the first letter of the model name.
+    """
     if not isinstance(cache, dict):
         return ""
 
@@ -721,6 +726,14 @@ def build_usage_segment(cache: dict[str, Any] | None) -> str:
             bar = build_progress_bar(entry["pct"], width=6)
             if bar:
                 seg.append(f"{label} {bar}")
+
+    model_week = model_week_bucket(cache)
+    if model_week is not None:
+        label = model_week.get("label")
+        initial = label[0].upper() if isinstance(label, str) and label else "M"
+        bar = build_progress_bar(model_week["pct"], width=6)
+        if bar:
+            seg.append(f"{initial} {bar}")
 
     if not seg:
         return ""

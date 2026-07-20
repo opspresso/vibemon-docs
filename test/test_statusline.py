@@ -30,5 +30,30 @@ class StatuslineCacheTest(unittest.TestCase):
             self.assertIn("ts", entry)
 
 
+class UsageSegmentTest(unittest.TestCase):
+    def test_usage_segment_includes_model_scoped_week_bar(self):
+        statusline = importlib.import_module("statusline")
+        segment = statusline.build_usage_segment({
+            "session": {"pct": 5},
+            "week_all": {"pct": 7},
+            "week_fable": {"pct": 12, "label": "Fable"},
+        })
+
+        self.assertIn("S ", segment)
+        self.assertIn("W ", segment)
+        self.assertIn("F ", segment)
+
+    def test_usage_segment_without_model_week_has_no_extra_bar(self):
+        statusline = importlib.import_module("statusline")
+        segment = statusline.build_usage_segment({
+            "session": {"pct": 5},
+            "week_all": {"pct": 7},
+        })
+
+        self.assertIn("S ", segment)
+        self.assertIn("W ", segment)
+        self.assertNotIn("F ", segment)
+
+
 if __name__ == "__main__":
     unittest.main()

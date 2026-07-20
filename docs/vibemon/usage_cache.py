@@ -40,6 +40,41 @@ def normalize_percent(value: Any) -> int | None:
         return None
 
 
+def is_usage_bucket(name: Any) -> bool:
+    """True for usage bucket keys: "session" plus any "week_*" bucket
+    ("week_all", or a model-scoped bucket like "week_fable")."""
+    return name == "session" or (isinstance(name, str) and name.startswith("week_"))
+
+
+def week_bucket_key(label: Any) -> str | None:
+    """Cache bucket key for a model-scoped weekly limit label, e.g.
+    "Fable" -> "week_fable", "Sonnet only" -> "week_sonnet"."""
+    if not isinstance(label, str):
+        return None
+    slug = re.sub(r"\s+only$", "", label.strip().lower())
+    slug = re.sub(r"[^a-z0-9]+", "_", slug).strip("_")
+    if not slug or slug == "all_models":
+        return None
+    return f"week_{slug}"
+
+
+def model_week_bucket(bucket_data: Any) -> dict[str, Any] | None:
+    """The model-scoped weekly bucket (any `week_*` key other than
+    `week_all`) from a provider's cache entry — the one with the highest
+    pct when several exist, since that's the binding limit."""
+    if not isinstance(bucket_data, dict):
+        return None
+    best: dict[str, Any] | None = None
+    for name, bucket in bucket_data.items():
+        if name == "week_all" or not is_usage_bucket(name) or name == "session":
+            continue
+        if not isinstance(bucket, dict) or not isinstance(bucket.get("pct"), int):
+            continue
+        if best is None or bucket["pct"] > best["pct"]:
+            best = bucket
+    return best
+
+
 def usage_from_rate_limits(data: dict[str, Any]) -> dict[str, Any] | None:
     rate_limits = data.get("rate_limits")
     if not isinstance(rate_limits, dict):
@@ -87,10 +122,18 @@ def parse_usage_output(text: str) -> dict[str, Any]:
             entry["resets"] = reset_match.group(1).strip()
         if "current session:" in low:
             result["session"] = entry
-        elif "current week (all models):" in low:
+            continue
+        week_match = re.search(r"current week \(([^)]+)\):", line, re.IGNORECASE)
+        if not week_match:
+            continue
+        scope = week_match.group(1).strip()
+        if scope.lower() == "all models":
             result["week_all"] = entry
-        elif "current week (sonnet only):" in low:
-            result["week_sonnet"] = entry
+            continue
+        key = week_bucket_key(scope)
+        if key:
+            label = re.sub(r"\s+only$", "", scope, flags=re.IGNORECASE).strip()
+            result[key] = {**entry, "label": label}
     return result
 
 
@@ -146,7 +189,7 @@ def get_fresh_provider(
         return None
 
     fresh = dict(data)
-    for bucket_name in ("session", "week_all", "week_sonnet"):
+    for bucket_name in [name for name in data if is_usage_bucket(name)]:
         bucket = data.get(bucket_name)
         if not isinstance(bucket, dict):
             continue
@@ -162,7 +205,7 @@ def get_fresh_provider(
         ):
             fresh.pop(bucket_name, None)
 
-    if not any(isinstance(fresh.get(name), dict) for name in ("session", "week_all", "week_sonnet")):
+    if not any(is_usage_bucket(name) and isinstance(value, dict) for name, value in fresh.items()):
         return None
     return fresh
 
@@ -186,7 +229,7 @@ def save_usage_cache(cache_path: str, updates: dict[str, Any], now: float | None
             existing = payload.get(provider)
             merged = dict(existing) if isinstance(existing, dict) else {}
             for key, item in value.items():
-                if key in ("session", "week_all", "week_sonnet") and isinstance(item, dict):
+                if is_usage_bucket(key) and isinstance(item, dict):
                     merged[key] = {**item, "updated_at": updated_at}
                 else:
                     merged[key] = item

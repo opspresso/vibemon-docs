@@ -88,7 +88,7 @@ Claude Code's statusline reads a separate `~/.vibemon/statusline.json` for displ
 
 The Claude Code installer also places a standalone refresher at `~/.vibemon/usage.py`. For Claude, it fetches plan usage directly from Anthropic's OAuth usage API using the local Claude Code login token (no active session required), falling back to a `claude -p "/usage"` subprocess when a token isn't available or the API call fails. For Codex, it queries the same account-level usage API Codex CLI's own `/status` polls using the local Codex login token, falling back to the newest local session log. Either way it writes the shared `~/.vibemon/cache/usage.json`, so the Desktop app can run it (`python3 ~/.vibemon/usage.py --max-age 600`) on startup or on a schedule to keep usage data fresh even when no Claude Code or Codex session is active. Since the `claude -p "/usage"` fallback is itself a real Claude Code session, the Desktop app sets `VIBEMON_SUPPRESS_HOOKS=1` in its environment so the spawned session's own hooks don't report status back. Independently of that env var, the hooks also skip any session whose cwd is `~/.vibemon` itself, so spawners that don't set the variable (older Desktop app versions, manual `usage.py` runs) can't surface a phantom `.vibemon` project either.
 
-The reset-countdown fields the hooks attach (`usage5hResetsIn`/`usageWeekResetsIn`) are populated whenever the cache was refreshed via a `resets_at` epoch — either an active Claude Code session's statusline (the official `rate_limits` path), `usage.py`'s direct Anthropic/Codex API queries, or a Codex session log. Only the last-resort `claude -p "/usage"` text fallback lacks a machine-parseable reset time, so the reset countdown is omitted in that case while the usage percentages still update.
+The reset-countdown fields the hooks attach (`usage5hResetsIn`/`usageWeekResetsIn`/`usageWeekModelResetsIn`) are populated whenever the cache was refreshed via a `resets_at` epoch — either an active Claude Code session's statusline (the official `rate_limits` path), `usage.py`'s direct Anthropic/Codex API queries, or a Codex session log. Only the last-resort `claude -p "/usage"` text fallback lacks a machine-parseable reset time, so the reset countdown is omitted in that case while the usage percentages still update.
 
 Note that the plan-usage fields (`usage5h`/`usageWeek` and their reset countdowns) are sent by the **Claude Code and Codex hooks**, since they both read from the same `usage.py`-refreshed cache (under separate `claude`/`codex` cache keys). The Kiro hook doesn't report usage, and OpenClaw reports context-window usage as `memory` instead.
 
@@ -269,6 +269,9 @@ curl -X POST https://vibemon.io/api/status \
 | `memory` | number | Context window usage 0-100 (optional) |
 | `usage5h` / `usageWeek` | number | Plan-usage percentage 0-100 (optional; Claude Code and Codex hooks only — see above) |
 | `usage5hResetsIn` / `usageWeekResetsIn` | number | Minutes until the usage window resets (optional; see above) |
+| `usageWeekModel` | number | Model-scoped weekly plan usage 0-100 (optional; e.g. the Fable weekly limit, when the plan has one) |
+| `usageWeekModelResetsIn` | number | Minutes until the model-scoped weekly window resets (optional) |
+| `usageWeekModelLabel` | string | Display name of the scoped model, e.g. `Fable` (optional) |
 
 ```bash
 # Delete agent status

@@ -11,6 +11,7 @@ from usage_cache import (  # noqa: E402
     parse_usage_output,
     save_usage_cache,
     usage_from_rate_limits,
+    week_bucket_key,
 )
 
 
@@ -34,6 +35,55 @@ class UsageCacheTest(unittest.TestCase):
 
         self.assertNotIn("session", usage)
         self.assertEqual(usage["week_all"], {"pct": 37, "resets": "tomorrow"})
+
+    def test_text_parser_extracts_model_scoped_week(self):
+        usage = parse_usage_output(
+            "Current session: 6% used · resets Jul 20 at 3:09pm\n"
+            "Current week (all models): 7% used · resets Jul 25 at 1:59am\n"
+            "Current week (Fable): 12% used · resets Jul 25 at 1:59am\n"
+            "Current week (Sonnet only): 3% used · resets Jul 25 at 1:59am"
+        )
+
+        self.assertEqual(usage["session"]["pct"], 6)
+        self.assertEqual(usage["week_all"]["pct"], 7)
+        self.assertEqual(usage["week_fable"]["pct"], 12)
+        self.assertEqual(usage["week_fable"]["label"], "Fable")
+        self.assertEqual(usage["week_sonnet"]["pct"], 3)
+        self.assertEqual(usage["week_sonnet"]["label"], "Sonnet")
+
+    def test_week_bucket_key_slugs_labels(self):
+        self.assertEqual(week_bucket_key("Fable"), "week_fable")
+        self.assertEqual(week_bucket_key("Sonnet only"), "week_sonnet")
+        self.assertIsNone(week_bucket_key("all models"))
+        self.assertIsNone(week_bucket_key(""))
+        self.assertIsNone(week_bucket_key(None))
+
+    def test_model_scoped_bucket_freshness_tracked_like_other_buckets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = str(Path(directory) / "usage.json")
+            save_usage_cache(
+                cache_path,
+                {
+                    "claude": {
+                        "session": {"pct": 10, "resets_at": 1000},
+                        "week_fable": {"pct": 12, "resets_at": 2000, "label": "Fable"},
+                    }
+                },
+                now=100,
+            )
+            save_usage_cache(
+                cache_path,
+                {"claude": {"session": {"pct": 30, "resets_at": 1100}}},
+                now=200,
+            )
+            cache = json.loads(Path(cache_path).read_text())
+
+        self.assertEqual(cache["claude"]["week_fable"]["updated_at"], 100)
+        self.assertEqual(cache["claude"]["week_fable"]["label"], "Fable")
+        fresh = get_fresh_provider(cache, "claude", 150, now=225)
+        self.assertEqual(fresh["week_fable"]["pct"], 12)
+        stale = get_fresh_provider(cache, "claude", 50, now=225)
+        self.assertNotIn("week_fable", stale)
 
     def test_provider_timestamps_are_independent(self):
         with tempfile.TemporaryDirectory() as directory:
