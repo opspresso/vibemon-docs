@@ -75,25 +75,37 @@ def model_week_bucket(bucket_data: Any) -> dict[str, Any] | None:
     return best
 
 
+def build_bucket(bucket: Any, pct_key: str, reset_key: str = "resets_at") -> dict[str, Any] | None:
+    """Build a `{pct, resets_at}` cache bucket from a raw API/log window.
+
+    Single source for the per-path field names: `utilization` (Claude legacy
+    fields), `percent` (Claude limits[]), `used_percent` (Codex), and
+    `used_percentage` (Claude Code rate_limits). Codex's live API alone
+    names the reset field `reset_at` (singular) — every other path uses
+    `resets_at`.
+    """
+    if not isinstance(bucket, dict):
+        return None
+    try:
+        pct = normalize_percent(bucket.get(pct_key))
+    except (TypeError, ValueError):
+        return None
+    if pct is None:
+        return None
+    entry: dict[str, Any] = {"pct": pct}
+    resets_at = parse_epoch(bucket.get(reset_key))
+    if resets_at is not None:
+        entry["resets_at"] = resets_at
+    return entry
+
+
 def usage_from_rate_limits(data: dict[str, Any]) -> dict[str, Any] | None:
     rate_limits = data.get("rate_limits")
     if not isinstance(rate_limits, dict):
         return None
 
-    def _entry(bucket: Any) -> dict[str, Any] | None:
-        if not isinstance(bucket, dict):
-            return None
-        pct = normalize_percent(bucket.get("used_percentage"))
-        if pct is None:
-            return None
-        entry: dict[str, Any] = {"pct": pct}
-        resets_at = parse_epoch(bucket.get("resets_at"))
-        if resets_at is not None:
-            entry["resets_at"] = resets_at
-        return entry
-
-    session = _entry(rate_limits.get("five_hour"))
-    week = _entry(rate_limits.get("seven_day"))
+    session = build_bucket(rate_limits.get("five_hour"), "used_percentage")
+    week = build_bucket(rate_limits.get("seven_day"), "used_percentage")
     if session is None and week is None:
         return None
     result: dict[str, Any] = {}
@@ -210,7 +222,25 @@ def get_fresh_provider(
     return fresh
 
 
-def save_usage_cache(cache_path: str, updates: dict[str, Any], now: float | None = None) -> bool:
+def save_usage_cache(
+    cache_path: str,
+    updates: dict[str, Any],
+    now: float | None = None,
+    replace: bool = False,
+) -> bool:
+    """Merge provider updates into the cache file.
+
+    `replace=False` (default) keeps existing usage buckets that the update
+    doesn't mention — required for partial writers like statusline.py, whose
+    rate_limits payload only carries session/week_all and must not wipe the
+    model-scoped weekly buckets written by the API path. `replace=True` is
+    for authoritative full-view refreshes (usage.py): usage buckets absent
+    from the update are dropped, so a bucket the provider stopped reporting
+    can't linger stale and force a network refresh on every run.
+
+    In both modes, usage buckets whose `resets_at` has already passed are
+    pruned — they are dead weight the read path ignores anyway.
+    """
     lock_fd = None
     try:
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
@@ -228,11 +258,20 @@ def save_usage_cache(cache_path: str, updates: dict[str, Any], now: float | None
                 continue
             existing = payload.get(provider)
             merged = dict(existing) if isinstance(existing, dict) else {}
+            if replace:
+                for key in [name for name in merged if is_usage_bucket(name)]:
+                    if key not in value:
+                        merged.pop(key)
             for key, item in value.items():
                 if is_usage_bucket(key) and isinstance(item, dict):
                     merged[key] = {**item, "updated_at": updated_at}
                 else:
                     merged[key] = item
+            for key in [name for name in merged if is_usage_bucket(name)]:
+                bucket = merged[key]
+                resets_at = parse_epoch(bucket.get("resets_at")) if isinstance(bucket, dict) else None
+                if resets_at is not None and resets_at <= updated_at:
+                    merged.pop(key)
             payload[provider] = {**merged, "updated_at": updated_at}
         # Retain ts for older installed hooks; freshness decisions use the
         # provider-level updated_at above.

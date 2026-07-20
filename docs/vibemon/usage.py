@@ -43,11 +43,10 @@ from typing import Any
 
 from usage_cache import (
     apply_session_floor,
+    build_bucket,
     get_fresh_provider,
     is_usage_bucket,
     load_usage_cache as _load_usage_cache,
-    normalize_percent,
-    parse_epoch,
     parse_usage_output,
     save_usage_cache as _save_usage_cache,
     week_bucket_key,
@@ -178,21 +177,6 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
         return None
 
-    def _window(bucket: Any) -> dict[str, Any] | None:
-        if not isinstance(bucket, dict):
-            return None
-        try:
-            pct = normalize_percent(bucket.get("utilization"))
-        except (TypeError, ValueError):
-            return None
-        if pct is None:
-            return None
-        entry: dict[str, Any] = {"pct": pct}
-        resets_at = parse_epoch(bucket.get("resets_at"))
-        if resets_at is not None:
-            entry["resets_at"] = resets_at
-        return entry
-
     result: dict[str, Any] = {}
 
     # The limits[] array is the authoritative shape: it carries the session
@@ -204,13 +188,9 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
         for item in limits:
             if not isinstance(item, dict):
                 continue
-            pct = normalize_percent(item.get("percent"))
-            if pct is None:
+            entry = build_bucket(item, "percent")
+            if entry is None:
                 continue
-            entry: dict[str, Any] = {"pct": pct}
-            resets_at = parse_epoch(item.get("resets_at"))
-            if resets_at is not None:
-                entry["resets_at"] = resets_at
             kind = item.get("kind")
             if kind == "session":
                 result["session"] = entry
@@ -225,11 +205,11 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
                     result[key] = {**entry, "label": str(label).strip()}
 
     if "session" not in result:
-        session = _window(data.get("five_hour"))
+        session = build_bucket(data.get("five_hour"), "utilization")
         if session is not None:
             result["session"] = session
     if "week_all" not in result:
-        week = _window(data.get("seven_day"))
+        week = build_bucket(data.get("seven_day"), "utilization")
         if week is not None:
             result["week_all"] = week
 
@@ -309,21 +289,6 @@ def fetch_codex_usage_live() -> dict[str, Any] | None:
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
         return None
 
-    def _window(bucket: Any) -> dict[str, Any] | None:
-        if not isinstance(bucket, dict):
-            return None
-        try:
-            pct = normalize_percent(bucket.get("used_percent"))
-        except (TypeError, ValueError):
-            return None
-        if pct is None:
-            return None
-        entry: dict[str, Any] = {"pct": pct}
-        resets_at = parse_epoch(bucket.get("reset_at"))
-        if resets_at is not None:
-            entry["resets_at"] = resets_at
-        return entry
-
     rate_limit = data.get("rate_limit") if isinstance(data.get("rate_limit"), dict) else {}
     # primary_window/secondary_window aren't fixed to 5h/weekly — whichever
     # window is currently active comes back as "primary". Classify by its
@@ -335,9 +300,9 @@ def fetch_codex_usage_live() -> dict[str, Any] | None:
             continue
         kind = _codex_window_kind(raw_window)
         if kind == "session":
-            session = _window(raw_window)
+            session = build_bucket(raw_window, "used_percent", reset_key="reset_at")
         elif kind == "week_all":
-            week = _window(raw_window)
+            week = build_bucket(raw_window, "used_percent", reset_key="reset_at")
 
     if session is None and week is None:
         return None
@@ -373,21 +338,6 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
                 continue
     files.sort(key=lambda item: item[1], reverse=True)
 
-    def _window(bucket: Any) -> dict[str, Any] | None:
-        if not isinstance(bucket, dict):
-            return None
-        try:
-            pct = normalize_percent(bucket.get("used_percent"))
-        except (TypeError, ValueError):
-            return None
-        if pct is None:
-            return None
-        entry: dict[str, Any] = {"pct": pct}
-        resets_at = parse_epoch(bucket.get("resets_at"))
-        if resets_at is not None:
-            entry["resets_at"] = resets_at
-        return entry
-
     for path, _mtime in files[:8]:
         try:
             with open(path, "r", errors="ignore") as f:
@@ -410,9 +360,9 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
             for raw_window in (rate_limits.get("primary"), rate_limits.get("secondary")):
                 kind = _codex_window_kind(raw_window)
                 if kind == "session":
-                    session = _window(raw_window)
+                    session = build_bucket(raw_window, "used_percent")
                 elif kind == "week_all":
-                    week = _window(raw_window)
+                    week = build_bucket(raw_window, "used_percent")
             if session is None and week is None:
                 continue
             result: dict[str, Any] = {}
@@ -436,8 +386,14 @@ def load_usage_cache() -> dict[str, Any] | None:
 
 
 def save_usage_cache(usage: dict[str, Any]) -> bool:
-    """Merge provider updates and stamp each provider independently."""
-    return _save_usage_cache(get_usage_cache_path(), usage)
+    """Persist a full-view refresh, stamping each provider independently.
+
+    `replace=True`: every source here (usage API limits[], `claude -p
+    "/usage"` text, Codex API/session log) reports the provider's complete
+    bucket set, so buckets missing from it no longer exist and must be
+    dropped — otherwise they linger stale and force a refresh every run.
+    """
+    return _save_usage_cache(get_usage_cache_path(), usage, replace=True)
 
 
 def refresh_usage(providers: set[str] | None = None) -> str:

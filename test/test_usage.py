@@ -67,6 +67,33 @@ class UsageTest(unittest.TestCase):
         self.assertEqual(result["week_all"]["pct"], 7)
         self.assertNotIn("week_fable", result)
 
+    def test_codex_live_usage_parses_wham_windows(self):
+        # Shape verified against the real wham/usage response: windows carry
+        # `used_percent` and a singular `reset_at` (unlike every other path's
+        # `resets_at`), and primary/secondary are classified by duration.
+        payload = {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 33,
+                    "window_minutes": 300,
+                    "reset_at": 5000,
+                },
+                "secondary_window": {
+                    "used_percent": 7,
+                    "window_minutes": 10080,
+                    "reset_at": 90000,
+                },
+            }
+        }
+        with (
+            patch.object(usage, "read_codex_token", return_value=("token", "account")),
+            patch.object(usage.urllib.request, "urlopen", _fake_urlopen(payload)),
+        ):
+            result = usage.fetch_codex_usage_live()
+
+        self.assertEqual(result["session"], {"pct": 33, "resets_at": 5000.0})
+        self.assertEqual(result["week_all"], {"pct": 7, "resets_at": 90000.0})
+
     def test_codex_windows_are_classified_by_duration(self):
         self.assertEqual(usage._codex_window_kind({"window_minutes": 300}), "session")
         self.assertEqual(usage._codex_window_kind({"window_minutes": 10080}), "week_all")
@@ -176,6 +203,27 @@ class UsageTest(unittest.TestCase):
 
         refresh.assert_not_called()
         self.assertEqual(json.loads(output.getvalue()), cache)
+
+    def test_refresh_save_drops_buckets_the_provider_stopped_reporting(self):
+        # usage.py's save path is a full-view refresh: a model-scoped bucket
+        # absent from the new payload must not survive the write, or the
+        # stale check would force a network refresh on every later run.
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = str(Path(directory) / "usage.json")
+            with patch.object(usage, "get_usage_cache_path", return_value=cache_path):
+                usage.save_usage_cache({
+                    "claude": {
+                        "session": {"pct": 10},
+                        "week_fable": {"pct": 12, "label": "Fable"},
+                    }
+                })
+                usage.save_usage_cache({
+                    "claude": {"session": {"pct": 30}, "week_all": {"pct": 7}}
+                })
+                cache = usage.load_usage_cache()
+
+        self.assertNotIn("week_fable", cache["claude"])
+        self.assertEqual(cache["claude"]["week_all"]["pct"], 7)
 
     def test_refresh_reports_cache_write_failure(self):
         with tempfile.TemporaryDirectory() as directory:

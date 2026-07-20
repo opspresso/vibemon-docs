@@ -148,6 +148,82 @@ class UsageCacheTest(unittest.TestCase):
         self.assertNotIn("session", after)
         self.assertIn("week_all", after)
 
+    def test_replace_mode_drops_buckets_missing_from_the_update(self):
+        # A full-view refresh that no longer reports week_fable must remove
+        # it — otherwise it lingers stale and forces a refresh on every run.
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = str(Path(directory) / "usage.json")
+            save_usage_cache(
+                cache_path,
+                {
+                    "claude": {
+                        "session": {"pct": 10, "resets_at": 10000},
+                        "week_fable": {"pct": 12, "resets_at": 20000, "label": "Fable"},
+                    }
+                },
+                now=100,
+            )
+            save_usage_cache(
+                cache_path,
+                {
+                    "claude": {
+                        "session": {"pct": 30, "resets_at": 11000},
+                        "week_all": {"pct": 7, "resets_at": 20000},
+                    }
+                },
+                now=200,
+                replace=True,
+            )
+            cache = json.loads(Path(cache_path).read_text())
+
+        self.assertNotIn("week_fable", cache["claude"])
+        self.assertEqual(cache["claude"]["session"]["pct"], 30)
+        self.assertEqual(cache["claude"]["week_all"]["pct"], 7)
+
+    def test_replace_mode_only_touches_updated_providers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = str(Path(directory) / "usage.json")
+            save_usage_cache(
+                cache_path,
+                {"codex": {"week_all": {"pct": 42, "resets_at": 20000}}},
+                now=100,
+            )
+            save_usage_cache(
+                cache_path,
+                {"claude": {"session": {"pct": 10, "resets_at": 11000}}},
+                now=200,
+                replace=True,
+            )
+            cache = json.loads(Path(cache_path).read_text())
+
+        self.assertEqual(cache["codex"]["week_all"]["pct"], 42)
+
+    def test_expired_buckets_are_pruned_on_save(self):
+        # Merge-mode writers (statusline) never mention week_fable, but an
+        # expired bucket is dead weight the read path ignores — prune it so
+        # the stale check can't force a refresh forever.
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = str(Path(directory) / "usage.json")
+            save_usage_cache(
+                cache_path,
+                {
+                    "claude": {
+                        "session": {"pct": 10, "resets_at": 10000},
+                        "week_fable": {"pct": 12, "resets_at": 2000, "label": "Fable"},
+                    }
+                },
+                now=100,
+            )
+            save_usage_cache(
+                cache_path,
+                {"claude": {"session": {"pct": 30, "resets_at": 10000}}},
+                now=2500,
+            )
+            cache = json.loads(Path(cache_path).read_text())
+
+        self.assertNotIn("week_fable", cache["claude"])
+        self.assertEqual(cache["claude"]["session"]["pct"], 30)
+
 
 if __name__ == "__main__":
     unittest.main()
