@@ -132,6 +132,30 @@ class UsageTest(unittest.TestCase):
 
         refresh.assert_called_once_with({"codex"})
 
+    def test_main_refreshes_when_model_week_bucket_is_stale(self):
+        # statusline.py keeps session/week_all fresh on every render, but the
+        # model-scoped weekly bucket (week_fable) only refreshes via the API
+        # path — a stale one must force a refresh or it decays and vanishes.
+        cache = {
+            "claude": {
+                "updated_at": 10000,
+                "session": {"pct": 10, "updated_at": 10000},
+                "week_all": {"pct": 8, "updated_at": 10000},
+                "week_fable": {"pct": 12, "label": "Fable", "updated_at": 100},
+            }
+        }
+        with (
+            patch.object(sys, "argv", ["usage.py", "--max-age", "600"]),
+            patch.object(usage, "load_usage_cache", return_value=cache),
+            patch.object(usage, "available_providers", return_value={"claude"}),
+            patch.object(usage.time, "time", return_value=10100),
+            patch.object(usage, "refresh_usage", return_value="busy") as refresh,
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(usage.main(), 0)
+
+        refresh.assert_called_once_with({"claude"})
+
     def test_main_skips_refresh_when_only_installed_provider_is_fresh(self):
         cache = {
             "claude": {

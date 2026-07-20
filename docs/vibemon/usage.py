@@ -44,6 +44,7 @@ from typing import Any
 from usage_cache import (
     apply_session_floor,
     get_fresh_provider,
+    is_usage_bucket,
     load_usage_cache as _load_usage_cache,
     normalize_percent,
     parse_epoch,
@@ -534,8 +535,16 @@ def main() -> int:
             if not isinstance(original, dict) or fresh is None:
                 providers_to_refresh.add(name)
                 continue
-            bucket_names = ("session", "week_all", "week_sonnet")
-            if any(key in original and key not in fresh for key in bucket_names):
+            # Any stored bucket that fell out of the fresh view is stale and
+            # needs a refresh. This must cover model-scoped weekly buckets
+            # (week_fable etc.): statusline.py keeps session/week_all fresh
+            # from every render's rate_limits, so without this check the
+            # provider always looks fresh and the model bucket would decay
+            # past the stale threshold and vanish from the tray/bubble.
+            if any(
+                is_usage_bucket(key) and isinstance(original.get(key), dict) and key not in fresh
+                for key in original
+            ):
                 providers_to_refresh.add(name)
         if not providers_to_refresh:
             print(json.dumps(cache))
