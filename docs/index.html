@@ -572,6 +572,9 @@ echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/ttyACM0</
                         <tr><td><code>memory</code></td><td>number</td><td>Context window usage 0-100 (optional)</td></tr>
                         <tr><td><code>usage5h</code> / <code>usageWeek</code></td><td>number</td><td>Plan-usage percentage 0-100 (optional; Claude Code and Codex hooks only — see above)</td></tr>
                         <tr><td><code>usage5hResetsIn</code> / <code>usageWeekResetsIn</code></td><td>number</td><td>Minutes until the usage window resets (optional; see above)</td></tr>
+                        <tr><td><code>usageWeekModel</code></td><td>number</td><td>Model-scoped weekly plan-usage percentage 0-100, e.g. the Fable weekly limit (optional)</td></tr>
+                        <tr><td><code>usageWeekModelResetsIn</code></td><td>number</td><td>Minutes until the model-scoped weekly window resets (optional)</td></tr>
+                        <tr><td><code>usageWeekModelLabel</code></td><td>string</td><td>Display label of the scoped model, e.g. "Fable" (optional)</td></tr>
                     </tbody>
                 </table>
                 <pre><code># Delete agent status

@@ -57,7 +57,7 @@
     },
     "character": {
       "label": "Character",
-      "help": "vibemon (purple), clawd (orange), kiro (white), claw (red), daangni (peach)"
+      "help": "vibemon (purple), clawd (orange), codex (blue), kiro (white), claw (red), daangni (peach)"
     },
     "serialEnabled": {
       "label": "Serial Output",

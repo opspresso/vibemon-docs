@@ -356,7 +356,9 @@ def get_usage_metadata() -> dict[str, Any]:
     "/usage"` subprocess as fallback) next to the project cache
     (~/.vibemon/cache/usage.json), under the "claude" key. Returns {usage5h,
     usageWeek, usage5hResetsIn, usageWeekResetsIn} for the 5-hour session
-    window and the weekly (all-models) window.
+    window and the weekly (all-models) window, plus {usageWeekModel,
+    usageWeekModelResetsIn, usageWeekModelLabel} when a model-scoped weekly
+    bucket (e.g. week_fable) is cached.
     """
     return _usage_fields(_load_usage_provider("claude"))
 

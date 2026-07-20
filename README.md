@@ -129,7 +129,10 @@ After installing or updating the plugin, rebuild OpenClaw's persisted plugin reg
 
 ## CLI Commands
 
-The hook script supports these commands:
+The hook script supports these commands. `--status` works with every
+monitor target; `--lock`, `--unlock`, `--lock-mode`, and `--reboot` are for
+the ESP32/serial device only — the Desktop app doesn't expose those
+endpoints (use its tray menu / Settings window instead):
 
 ```bash
 # Lock monitor to current project
