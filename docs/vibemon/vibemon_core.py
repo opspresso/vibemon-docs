@@ -100,6 +100,7 @@ HTTP_TIMEOUT_SECONDS = 5
 # than sent as-is. Usage freshness is evaluated per provider; project metadata
 # continues to use its own entry timestamps.
 CACHE_STALE_SECONDS = 1800
+CODEX_SESSIONS_DIR = os.path.expanduser("~/.codex/sessions")
 
 # Desktop launch configuration
 DESKTOP_LAUNCH_WAIT_SECONDS = 3
@@ -290,6 +291,83 @@ def get_project_metadata(project: str) -> dict[str, Any]:
         return {}
 
     return entry
+
+
+def _reverse_jsonl(path: str):
+    """Yield JSON objects from a JSONL file, newest first."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            position = f.tell()
+            remainder = b""
+            while position > 0:
+                chunk_size = min(65536, position)
+                position -= chunk_size
+                f.seek(position)
+                remainder = f.read(chunk_size) + remainder
+                lines = remainder.split(b"\n")
+                remainder = lines[0]
+                for line in reversed(lines[1:]):
+                    if not line:
+                        continue
+                    try:
+                        value = json.loads(line)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    if isinstance(value, dict):
+                        yield value
+            if remainder:
+                try:
+                    value = json.loads(remainder)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return
+                if isinstance(value, dict):
+                    yield value
+    except OSError:
+        return
+
+
+def get_codex_context_usage(data: dict[str, Any]) -> int:
+    """Return the active Codex thread's context-window usage percentage."""
+    transcript_path = data.get("transcript_path") or data.get("transcriptPath")
+    if not isinstance(transcript_path, str) or not os.path.isfile(transcript_path):
+        thread_id = (
+            data.get("session_id")
+            or data.get("sessionId")
+            or data.get("thread_id")
+            or data.get("threadId")
+            or os.environ.get("CODEX_THREAD_ID")
+        )
+        if not isinstance(thread_id, str) or not thread_id:
+            return 0
+        matches = glob.glob(
+            os.path.join(CODEX_SESSIONS_DIR, "**", f"*{thread_id}.jsonl"),
+            recursive=True,
+        )
+        if not matches:
+            return 0
+        transcript_path = max(matches, key=os.path.getmtime)
+
+    for entry in _reverse_jsonl(transcript_path):
+        if entry.get("type") != "event_msg":
+            continue
+        payload = entry.get("payload")
+        if not isinstance(payload, dict) or payload.get("type") != "token_count":
+            continue
+        info = payload.get("info")
+        if not isinstance(info, dict):
+            continue
+        usage = info.get("last_token_usage")
+        if not isinstance(usage, dict):
+            continue
+        total_tokens = usage.get("total_tokens")
+        context_window = info.get("model_context_window")
+        if not isinstance(total_tokens, (int, float)):
+            continue
+        if not isinstance(context_window, (int, float)) or context_window <= 0:
+            continue
+        return max(0, min(100, int(total_tokens * 100 / context_window)))
+    return 0
 
 
 def _resets_in_minutes(entry: dict[str, Any]) -> int | None:

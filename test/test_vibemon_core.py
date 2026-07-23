@@ -2,6 +2,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -63,6 +64,69 @@ class UsageFieldsTest(unittest.TestCase):
 
         self.assertNotIn("usageWeekModel", fields)
         self.assertNotIn("usageWeekModelLabel", fields)
+
+
+class CodexContextUsageTest(unittest.TestCase):
+    def test_reads_latest_context_usage_for_thread(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session_path = Path(directory) / "rollout-thread-123.jsonl"
+            session_path.write_text(
+                json.dumps({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": {"total_tokens": 42000},
+                            "model_context_window": 100000,
+                        },
+                    },
+                })
+                + "\n"
+            )
+            with patch.object(vibemon_core, "CODEX_SESSIONS_DIR", directory):
+                result = vibemon_core.get_codex_context_usage({
+                    "session_id": "thread-123"
+                })
+
+        self.assertEqual(result, 42)
+
+    def test_uses_most_recent_token_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session_path = Path(directory) / "session.jsonl"
+            session_path.write_text(
+                "\n".join([
+                    json.dumps({
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "last_token_usage": {"total_tokens": 10000},
+                                "model_context_window": 100000,
+                            },
+                        },
+                    }),
+                    json.dumps({
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "last_token_usage": {"total_tokens": 73000},
+                                "model_context_window": 100000,
+                            },
+                        },
+                    }),
+                ])
+                + "\n"
+            )
+            result = vibemon_core.get_codex_context_usage({
+                "transcript_path": str(session_path)
+            })
+
+        self.assertEqual(result, 73)
+
+    def test_returns_zero_without_context_data(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(vibemon_core.get_codex_context_usage({}), 0)
 
 
 class VibemonHomeGuardTest(unittest.TestCase):

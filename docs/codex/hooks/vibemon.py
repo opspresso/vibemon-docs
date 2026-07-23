@@ -55,13 +55,14 @@ def build_payload(
     metadata = core.get_project_metadata(project)
     usage = core.get_codex_usage_metadata()
     model_name = data.get("model", "")
+    memory = core.get_codex_context_usage(data)
 
     return {
         "state": state,
         "tool": tool,
         "project": project,
         "model": model_name or metadata.get("model", ""),
-        "memory": metadata.get("memory", 0),
+        "memory": memory,
         "character": CHARACTER,
         "terminalId": core.get_terminal_id(),
         **usage,
