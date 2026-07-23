@@ -1,2 +1,11 @@
 [features]
 hooks = true
+
+[tui]
+status_line = [
+  "model-with-reasoning",
+  "current-dir",
+  "git-branch",
+  "context-used",
+  "context-window-size",
+]

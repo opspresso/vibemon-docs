@@ -663,6 +663,56 @@ def ensure_codex_hooks_enabled(config_text: str) -> str:
     return ensure_feature_flag_enabled(config_text, "hooks")
 
 
+CODEX_STATUS_LINE_ITEMS = [
+    "model-with-reasoning",
+    "current-dir",
+    "git-branch",
+    "context-used",
+    "context-window-size",
+]
+
+
+def ensure_codex_status_line(config_text: str) -> str:
+    """Ensure Codex's status line includes context-window usage."""
+    tui_match = re.search(r"(?ms)^\[tui\]\n(.*?)(?=^\[|\Z)", config_text)
+    if tui_match:
+        section = tui_match.group(0)
+        status_line_match = re.search(r"(?ms)^status_line\s*=\s*\[(.*?)^\]", section)
+        if status_line_match:
+            existing_items = re.findall(r'"([^"]+)"', status_line_match.group(1))
+            missing_items = [
+                item for item in CODEX_STATUS_LINE_ITEMS if item not in existing_items
+            ]
+            if not missing_items:
+                return config_text
+            insertion = "".join(f'  "{item}",\n' for item in missing_items)
+            updated_section = (
+                section[:status_line_match.end() - 1]
+                + insertion
+                + section[status_line_match.end() - 1:]
+            )
+        else:
+            status_line = "status_line = [\n"
+            status_line += "".join(f'  "{item}",\n' for item in CODEX_STATUS_LINE_ITEMS)
+            status_line += "]\n"
+            updated_section = section.rstrip() + "\n" + status_line
+        return config_text[:tui_match.start()] + updated_section + config_text[tui_match.end():]
+
+    status_line = "[tui]\nstatus_line = [\n"
+    status_line += "".join(f'  "{item}",\n' for item in CODEX_STATUS_LINE_ITEMS)
+    status_line += "]\n\n"
+    nested_tui_match = re.search(r"(?m)^\[tui\.", config_text)
+    if nested_tui_match:
+        return (
+            config_text[:nested_tui_match.start()]
+            + status_line
+            + config_text[nested_tui_match.start():]
+        )
+
+    suffix = "" if config_text.endswith("\n") else "\n"
+    return config_text + suffix + "\n" + status_line.rstrip() + "\n"
+
+
 def install_codex(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon for Codex CLI."""
     codex_home = Path.home() / ".codex"
@@ -709,8 +759,9 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
     if config_toml_file.exists():
         existing_toml = config_toml_file.read_text()
         updated_toml = ensure_codex_hooks_enabled(existing_toml)
+        updated_toml = ensure_codex_status_line(updated_toml)
         config_toml_file.write_text(updated_toml)
-        print(f"  {colored('✓', 'green')} hooks enabled in ~/.codex/config.toml")
+        print(f"  {colored('✓', 'green')} hooks and status line configured in ~/.codex/config.toml")
     else:
         config_toml_file.write_text(source.get_file("codex/config.toml"))
         print(f"  {colored('✓', 'green')} ~/.codex/config.toml created")
