@@ -21,6 +21,10 @@ try:
 except ImportError:  # Windows
     fcntl = None
 
+# The statusline re-renders on every tick; without CREATE_NO_WINDOW each `git`
+# call would flash a console window on Windows.
+NO_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 VIBEMON_HOME = Path.home() / ".vibemon"
 if str(VIBEMON_HOME) not in sys.path:
     sys.path.insert(0, str(VIBEMON_HOME))
@@ -50,7 +54,7 @@ def load_config() -> None:
 
     def _load(path: Path) -> dict[str, Any]:
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError, IOError):
             return {}
@@ -237,6 +241,7 @@ def get_git_root(directory: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=2,
+            creationflags=NO_WINDOW_FLAGS,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -287,6 +292,7 @@ def get_git_info(directory: str) -> str:
             capture_output=True,
             text=True,
             timeout=2,
+            creationflags=NO_WINDOW_FLAGS,
         )
         if result.returncode != 0:
             return ""
@@ -425,7 +431,7 @@ def save_to_cache(project: str, model: str, memory: int) -> None:
         cache: dict[str, Any] = {}
         if os.path.exists(cache_path):
             try:
-                with open(cache_path) as f:
+                with open(cache_path, encoding="utf-8") as f:
                     cache = json.load(f)
             except (json.JSONDecodeError, IOError):
                 cache = {}
@@ -445,7 +451,7 @@ def save_to_cache(project: str, model: str, memory: int) -> None:
 
         # Atomic write: write to temp file, then rename
         tmpfile = f"{cache_path}.tmp.{os.getpid()}"
-        with open(tmpfile, "w") as f:
+        with open(tmpfile, "w", encoding="utf-8") as f:
             json.dump(cache, f)
         os.replace(tmpfile, cache_path)  # os.replace is atomic on POSIX
 
@@ -541,7 +547,7 @@ def get_token_window_path() -> str:
 def load_window_start() -> float | None:
     """Load the token window start time from persistent file."""
     try:
-        with open(get_token_window_path()) as f:
+        with open(get_token_window_path(), encoding="utf-8") as f:
             data = json.load(f)
             return data.get("window_start")
     except (FileNotFoundError, json.JSONDecodeError, IOError):
@@ -554,7 +560,7 @@ def save_window_start(window_start: float) -> None:
     try:
         os.makedirs(os.path.dirname(window_file), exist_ok=True)
         tmpfile = f"{window_file}.tmp.{os.getpid()}"
-        with open(tmpfile, "w") as f:
+        with open(tmpfile, "w", encoding="utf-8") as f:
             json.dump({"window_start": window_start}, f)
         os.replace(tmpfile, window_file)
     except (IOError, OSError):
@@ -960,6 +966,15 @@ def save_cache_background(project: str, model: str, memory: int) -> None:
 
 def main() -> None:
     """Main entry point."""
+    # The rendered line carries emoji and box-drawing characters. Claude Code
+    # reads this as UTF-8, but Python encodes stdout with the locale encoding,
+    # so on a cp949/cp1252 Windows console every render would die with
+    # UnicodeEncodeError instead of printing.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        pass
+
     # Disable statusline for team sub-agents spawned via Task tool
     # Task tool agents run with CLAUDE_CODE_ENTRYPOINT=local-agent
     # STATUSLINE_DISABLED=1 allows manual override

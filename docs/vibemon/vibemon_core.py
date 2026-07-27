@@ -13,6 +13,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,12 @@ try:
 except ImportError:  # Windows
     fcntl = None
 
+IS_WINDOWS = os.name == "nt"
+
+# Hooks run from GUI parents (the Desktop app) as well as terminals. Without
+# CREATE_NO_WINDOW every helper process flashes a console window on Windows.
+NO_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 # ============================================================================
 # Configuration Loading
 # ============================================================================
@@ -44,7 +51,7 @@ def load_config() -> None:
         return
 
     try:
-        with open(config_file) as f:
+        with open(config_file, encoding="utf-8") as f:
             config = json.load(f)
     except (json.JSONDecodeError, IOError):
         return
@@ -174,7 +181,17 @@ def resolve_serial_port(port_pattern: str | None) -> str | None:
 
 
 def read_input() -> str:
-    """Read input from stdin."""
+    """Read the hook event JSON from stdin.
+
+    The host writes UTF-8, but Python decodes stdin with the locale encoding,
+    so on a cp949/cp1252 Windows console a non-ASCII prompt or project name
+    would raise here — and the bare `except` would turn that into a hook that
+    silently does nothing.
+    """
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        pass
     try:
         return sys.stdin.read()
     except Exception:
@@ -204,6 +221,7 @@ def get_git_root(directory: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=2,
+            creationflags=NO_WINDOW_FLAGS,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -275,7 +293,7 @@ def get_project_metadata(project: str) -> dict[str, Any]:
         return {}
 
     try:
-        with open(config.cache_path) as f:
+        with open(config.cache_path, encoding="utf-8") as f:
             cache = json.load(f)
         entry = cache.get(project, {})
     except (json.JSONDecodeError, IOError):
@@ -506,7 +524,17 @@ def _acquire_lock(lock_fd: int, max_retries: int = SERIAL_LOCK_MAX_RETRIES) -> b
 
 
 def send_serial_raw(port: str, data: str) -> bool:
-    """Send data via serial port with file locking (internal use)."""
+    """Send data via serial port with file locking (internal use).
+
+    POSIX only: this drives the port through `stty` and a non-blocking write to
+    the device file, neither of which exists on Windows (a COM port would need
+    `mode COMx` plus a `\\\\.\\COMx` handle). HTTP and cloud targets still work
+    there, so a configured serial_port is ignored rather than fatal.
+    """
+    if IS_WINDOWS:
+        debug_log("Serial output is not supported on Windows; skipping")
+        return False
+
     if not os.path.exists(port):
         return False
 
@@ -570,6 +598,9 @@ def send_serial(port: str, data: str) -> bool:
     Uses a debounce file to coalesce rapid updates. Only the last update
     within the debounce window is actually sent to the serial port.
     """
+    if IS_WINDOWS:
+        return send_serial_raw(port, data)
+
     if not os.path.exists(port):
         return False
 
@@ -588,7 +619,7 @@ def send_serial(port: str, data: str) -> bool:
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
-            with open(debounce_path, "w") as f:
+            with open(debounce_path, "w", encoding="utf-8") as f:
                 json.dump({"id": my_id, "data": data, "time": time.time()}, f)
         finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -602,7 +633,7 @@ def send_serial(port: str, data: str) -> bool:
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
-            with open(debounce_path) as f:
+            with open(debounce_path, encoding="utf-8") as f:
                 state = json.load(f)
 
             if state["id"] != my_id:
@@ -940,7 +971,7 @@ def show_monitor_window(url: str) -> None:
 
 
 def get_user_shell() -> str:
-    """Get user's login shell."""
+    """Get user's login shell (POSIX)."""
     shell = os.environ.get("SHELL")
     if shell:
         return shell
@@ -956,16 +987,33 @@ def get_user_shell() -> str:
 
 
 def launch_desktop() -> None:
-    """Launch Desktop App via npx."""
+    """Launch Desktop App via npx.
+
+    POSIX goes through a login shell so npx is found the way the user's
+    terminal finds it. Windows has no login shell to borrow, and `npx` there is
+    a `.cmd` shim that CreateProcess can't resolve from the bare name, so the
+    absolute path from PATH is used instead.
+    """
     debug_log("Launching Desktop App via npx")
     try:
-        shell = get_user_shell()
-        debug_log(f"Using shell: {shell}")
+        if IS_WINDOWS:
+            npx = shutil.which("npx")
+            if not npx:
+                debug_log("npx not found in PATH; cannot launch Desktop App")
+                return
+            command = [npx, "vibemon@latest"]
+            kwargs = {"creationflags": NO_WINDOW_FLAGS | getattr(subprocess, "DETACHED_PROCESS", 0)}
+        else:
+            shell = get_user_shell()
+            debug_log(f"Using shell: {shell}")
+            command = [shell, "-l", "-c", "npx vibemon@latest"]
+            kwargs = {"start_new_session": True}
+
         subprocess.Popen(
-            [shell, "-l", "-c", "npx vibemon@latest"],
+            command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            **kwargs,
         )
         time.sleep(DESKTOP_LAUNCH_WAIT_SECONDS)
     except Exception as e:

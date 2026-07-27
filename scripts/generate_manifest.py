@@ -54,7 +54,10 @@ def build_manifest() -> dict:
 
 def main():
     manifest = build_manifest()
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n")
+    # newline="": a CRLF manifest would not match the LF one CI publishes, so
+    # regenerating on Windows must produce the same bytes as on Linux.
+    with open(MANIFEST_PATH, "w", encoding="utf-8", newline="") as f:
+        f.write(json.dumps(manifest, indent=2) + "\n")
     print(f"Wrote {MANIFEST_PATH} ({len(manifest['files'])} files)")
 
 

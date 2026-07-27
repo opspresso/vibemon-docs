@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import sys
 import tempfile
@@ -239,11 +240,20 @@ class WriteTextAtomicTest(unittest.TestCase):
 
     def test_original_survives_a_failed_write(self):
         self.path.write_text("original")
-        with mock.patch.object(Path, "write_text", side_effect=OSError("disk full")):
+        with mock.patch.object(install.os, "replace", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 install.write_text_atomic(self.path, "replacement")
         self.assertEqual(self.path.read_text(), "original")
         self.assertEqual([p.name for p in Path(self.tmp.name).iterdir()], ["settings.json"])
+
+    def test_line_endings_are_preserved_verbatim(self):
+        """The installed bytes have to hash to the manifest value on every OS.
+
+        Text-mode writes translate \\n to \\r\\n on Windows, which would leave
+        every installed script permanently mismatched against manifest.json.
+        """
+        install.write_text_atomic(self.path, "a\nb\n")
+        self.assertEqual(self.path.read_bytes(), b"a\nb\n")
 
 
 class BackupFileTest(unittest.TestCase):
@@ -293,3 +303,253 @@ class VerifyContentTest(unittest.TestCase):
 
     def test_unmanifested_path_is_not_checked(self):
         install.verify_content("claude/settings.json", "anything")  # no raise
+
+
+DOCS_DIR = Path(__file__).parents[1] / "docs"
+CLAUDE_SETTINGS = json.loads((DOCS_DIR / "claude" / "settings.json").read_text(encoding="utf-8"))
+CODEX_HOOKS = json.loads((DOCS_DIR / "codex" / "hooks.json").read_text(encoding="utf-8"))
+
+
+class WindowsFake:
+    """Pretend to be Windows with a known Python and home directory."""
+
+    PYTHON = "C:/Python313/python.exe"
+    HOME = "C:/Users/dev"
+
+    def __enter__(self):
+        self._patches = [
+            mock.patch.object(install, "IS_WINDOWS", True),
+            mock.patch.object(install.sys, "executable", self.PYTHON),
+            mock.patch.object(install.Path, "home", staticmethod(lambda: Path(self.HOME))),
+            mock.patch.object(install, "has_git_bash", lambda: True),
+        ]
+        for patch in self._patches:
+            patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        for patch in reversed(self._patches):
+            patch.stop()
+        return False
+
+
+class AdaptClaudeSettingsTest(unittest.TestCase):
+    def test_posix_output_is_byte_identical_to_the_packaged_file(self):
+        """Existing POSIX installs must not see a single changed character."""
+        settings = json.loads(json.dumps(CLAUDE_SETTINGS))
+        self.assertEqual(install.adapt_claude_settings(settings), CLAUDE_SETTINGS)
+
+    def test_windows_hooks_use_exec_form(self):
+        with WindowsFake():
+            settings = install.adapt_claude_settings(json.loads(json.dumps(CLAUDE_SETTINGS)))
+        hook = settings["hooks"]["SessionStart"][0]["hooks"][0]
+        self.assertEqual(hook["command"], WindowsFake.PYTHON)
+        self.assertEqual(hook["args"], [f"{WindowsFake.HOME}/.claude/hooks/vibemon.py"])
+        # Untouched fields survive the rewrite.
+        self.assertTrue(hook["async"])
+        self.assertEqual(hook["timeout"], 10)
+
+    def test_windows_hooks_never_keep_a_tilde(self):
+        """PowerShell does not expand `~` in argument position."""
+        with WindowsFake():
+            settings = install.adapt_claude_settings(json.loads(json.dumps(CLAUDE_SETTINGS)))
+        self.assertNotIn("~", json.dumps(settings))
+        self.assertNotIn("python3", json.dumps(settings))
+
+    def test_windows_statusline_stays_shell_form(self):
+        """statusLine has no exec form, so it must remain a single string."""
+        with WindowsFake():
+            settings = install.adapt_claude_settings(json.loads(json.dumps(CLAUDE_SETTINGS)))
+        status_line = settings["statusLine"]
+        self.assertNotIn("args", status_line)
+        self.assertEqual(
+            status_line["command"],
+            f"{WindowsFake.PYTHON} {WindowsFake.HOME}/.claude/statusline.py",
+        )
+
+
+class WindowsShellCommandTest(unittest.TestCase):
+    PY = "C:/Python313/python.exe"
+    PY_SPACED = "C:/Program Files/Python313/python.exe"
+    SCRIPT_SPACED = "C:/Users/a b/.claude/statusline.py"
+
+    def test_space_free_paths_are_shell_agnostic(self):
+        for git_bash in (True, False):
+            with mock.patch.object(install, "has_git_bash", lambda: git_bash):
+                self.assertEqual(
+                    install.windows_shell_command(self.PY, "C:/Users/dev/x.py"),
+                    f"{self.PY} C:/Users/dev/x.py",
+                )
+
+    def test_a_quoted_argument_alone_stays_shell_agnostic(self):
+        """Only a quoted *command* forces the PowerShell call operator."""
+        for git_bash in (True, False):
+            with mock.patch.object(install, "has_git_bash", lambda: git_bash):
+                self.assertEqual(
+                    install.windows_shell_command(self.PY, self.SCRIPT_SPACED),
+                    f'{self.PY} "{self.SCRIPT_SPACED}"',
+                )
+
+    def test_quoted_command_gets_an_ampersand_only_without_git_bash(self):
+        with mock.patch.object(install, "has_git_bash", lambda: True):
+            self.assertEqual(
+                install.windows_shell_command(self.PY_SPACED, "C:/Users/dev/x.py"),
+                f'"{self.PY_SPACED}" C:/Users/dev/x.py',
+            )
+        with mock.patch.object(install, "has_git_bash", lambda: False):
+            self.assertEqual(
+                install.windows_shell_command(self.PY_SPACED, "C:/Users/dev/x.py"),
+                f'& "{self.PY_SPACED}" C:/Users/dev/x.py',
+            )
+
+
+class AdaptCodexHooksTest(unittest.TestCase):
+    def test_posix_output_is_unchanged(self):
+        hooks = json.loads(json.dumps(CODEX_HOOKS))
+        self.assertEqual(install.adapt_codex_hooks(hooks), CODEX_HOOKS)
+
+    def test_windows_override_is_added_beside_the_posix_command(self):
+        with WindowsFake():
+            hooks = install.adapt_codex_hooks(json.loads(json.dumps(CODEX_HOOKS)))
+        hook = hooks["hooks"]["Stop"][0]["hooks"][0]
+        self.assertEqual(hook["command"], "python3 ~/.codex/hooks/vibemon.py")
+        self.assertEqual(
+            hook["commandWindows"],
+            f"{WindowsFake.PYTHON} {WindowsFake.HOME}/.codex/hooks/vibemon.py",
+        )
+
+
+KIRO_AGENT = json.loads((DOCS_DIR / "kiro" / "agents" / "default.json").read_text(encoding="utf-8"))
+KIRO_HOOK_FILE = (DOCS_DIR / "kiro" / "hooks" / "vibemon-file-created.kiro.hook").read_text(
+    encoding="utf-8"
+)
+
+
+class AdaptKiroTest(unittest.TestCase):
+    def test_posix_agent_is_unchanged(self):
+        agent = json.loads(json.dumps(KIRO_AGENT))
+        self.assertEqual(install.adapt_kiro_agent(agent), KIRO_AGENT)
+
+    def test_posix_hook_file_is_returned_verbatim(self):
+        """These files are hashed in manifest.json, so POSIX must not touch them."""
+        self.assertEqual(install.adapt_kiro_hook_file(KIRO_HOOK_FILE), KIRO_HOOK_FILE)
+
+    def test_windows_agent_keeps_the_event_name_argument(self):
+        with WindowsFake():
+            agent = install.adapt_kiro_agent(json.loads(json.dumps(KIRO_AGENT)))
+        hook = agent["hooks"]["agentSpawn"][0]
+        self.assertEqual(hook["command"], WindowsFake.PYTHON)
+        self.assertEqual(
+            hook["args"],
+            [f"{WindowsFake.HOME}/.kiro/hooks/vibemon.py", "agentSpawn"],
+        )
+
+    def test_windows_hook_file_command_keeps_the_event_name(self):
+        with WindowsFake():
+            adapted = json.loads(install.adapt_kiro_hook_file(KIRO_HOOK_FILE))
+        self.assertEqual(
+            adapted["then"]["command"],
+            f"{WindowsFake.PYTHON} {WindowsFake.HOME}/.kiro/hooks/vibemon.py fileCreated",
+        )
+        # Everything else about the definition survives the rewrite.
+        self.assertEqual(adapted["when"], {"type": "fileCreated", "patterns": ["**/*"]})
+        self.assertEqual(adapted["then"]["type"], "runCommand")
+
+    def test_windows_hook_file_has_no_tilde_or_python3(self):
+        with WindowsFake():
+            adapted = install.adapt_kiro_hook_file(KIRO_HOOK_FILE)
+        self.assertNotIn("~", adapted)
+        self.assertNotIn("python3", adapted)
+
+    def test_a_hook_file_without_vibemon_is_left_alone(self):
+        other = json.dumps({"then": {"type": "runCommand", "command": "echo hi"}})
+        with WindowsFake():
+            self.assertEqual(install.adapt_kiro_hook_file(other), other)
+
+
+class HookIdentityTest(unittest.TestCase):
+    def test_args_and_windows_override_are_part_of_the_identity(self):
+        exec_form = {"command": "python.exe", "args": ["C:/x/.claude/hooks/vibemon.py"]}
+        self.assertIn("vibemon.py", install._hook_identity(exec_form))
+        override = {"command": "python3 ~/a.py", "commandWindows": "python.exe C:/a.py"}
+        self.assertIn("C:/a.py", install._hook_identity(override))
+
+    def test_exec_form_and_windows_override_are_recognized_as_vibemon(self):
+        self.assertTrue(
+            install._is_vibemon_hook(
+                {"command": "python.exe", "args": ["C:/x/.claude/hooks/vibemon.py"]}
+            )
+        )
+        self.assertTrue(
+            install._is_vibemon_hook(
+                {"command": "echo hi", "commandWindows": "python.exe C:/x/vibemon.py"}
+            )
+        )
+        self.assertFalse(install._is_vibemon_hook({"command": "python.exe", "args": ["x.py"]}))
+
+    def test_a_user_hook_sharing_the_interpreter_does_not_shadow_ours(self):
+        """Deduping on `command` alone would drop the VibeMon hook entirely."""
+        existing = [{"hooks": [{"type": "command", "command": "python.exe", "args": ["fmt.py"]}]}]
+        ours = {"hooks": [{"type": "command", "command": "python.exe", "args": ["vibemon.py"]}]}
+        kept = install.filter_new_hooks(ours, install.get_hook_identities(existing))
+        self.assertEqual(kept, ours)
+
+    def test_an_identical_exec_form_hook_is_deduped(self):
+        entry = {"hooks": [{"type": "command", "command": "python.exe", "args": ["vibemon.py"]}]}
+        self.assertIsNone(
+            install.filter_new_hooks(entry, install.get_hook_identities([entry]))
+        )
+
+
+class WriteFileWithDiffTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "vibemon.py"
+
+    def test_crlf_copy_is_rewritten_instead_of_reported_unchanged(self):
+        """An older Windows install wrote CRLF; its hash never matches the manifest.
+
+        A text comparison sees no difference, so the file would stay mismatched
+        forever and the Desktop app would keep reporting an update.
+        """
+        self.path.write_bytes(b"print('x')\r\n")
+        self.assertTrue(install.write_file_with_diff(self.path, "print('x')\n", "hook"))
+        self.assertEqual(self.path.read_bytes(), b"print('x')\n")
+
+    def test_identical_bytes_are_left_alone(self):
+        self.path.write_bytes(b"print('x')\n")
+        before = self.path.stat().st_mtime_ns
+        self.assertTrue(install.write_file_with_diff(self.path, "print('x')\n", "hook"))
+        self.assertEqual(self.path.stat().st_mtime_ns, before)
+
+
+class UninstallHooksFromJsonTest(unittest.TestCase):
+    """--uninstall --codex used to leave every VibeMon hook in hooks.json.
+
+    hooks.json *is* {"hooks": {...events...}}, so descending into "hooks" and
+    then reading "hooks" again found nothing and the function returned early.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        install.BACKED_UP.clear()
+        self.addCleanup(install.BACKED_UP.clear)
+        self.path = Path(self.tmp.name) / "hooks.json"
+
+    def _write(self, config):
+        self.path.write_text(json.dumps(config), encoding="utf-8")
+
+    def test_codex_shape_hooks_are_removed(self):
+        self._write({"hooks": {"Stop": [VIBEMON_ENTRY]}})
+        install._uninstall_hooks_from_json(self.path, [], "hooks.json")
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")), {})
+
+    def test_user_hooks_and_other_keys_survive(self):
+        self._write({"version": 2, "hooks": {"Stop": [VIBEMON_ENTRY, USER_ENTRY]}})
+        install._uninstall_hooks_from_json(self.path, [], "hooks.json")
+        self.assertEqual(
+            json.loads(self.path.read_text(encoding="utf-8")),
+            {"version": 2, "hooks": {"Stop": [USER_ENTRY]}},
+        )

@@ -57,6 +57,10 @@ try:
 except ImportError:  # Windows
     fcntl = None
 
+# The Desktop app runs this refresher on a schedule; without CREATE_NO_WINDOW
+# every helper process pops a console window on Windows.
+NO_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 CLAUDE_TIMEOUT_SECONDS = 30
 CLAUDE_TOKEN_TIMEOUT_SECONDS = 3
 CLAUDE_API_TIMEOUT_SECONDS = 8
@@ -85,7 +89,7 @@ def get_usage_cache_path() -> str:
     cache_path = "~/.vibemon/cache/projects.json"
     config_file = os.path.expanduser("~/.vibemon/config.json")
     try:
-        with open(config_file) as f:
+        with open(config_file, encoding="utf-8") as f:
             config = json.load(f)
         if isinstance(config, dict) and config.get("cache_path"):
             cache_path = str(config["cache_path"])
@@ -135,6 +139,7 @@ def read_claude_token() -> str | None:
                 capture_output=True,
                 text=True,
                 timeout=CLAUDE_TOKEN_TIMEOUT_SECONDS,
+                creationflags=NO_WINDOW_FLAGS,
             ).stdout.strip()
             token = json.loads(raw).get("claudeAiOauth", {}).get("accessToken")
             if token:
@@ -142,7 +147,7 @@ def read_claude_token() -> str | None:
         except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError, AttributeError):
             pass
     try:
-        with open(CLAUDE_CREDENTIALS_FILE) as f:
+        with open(CLAUDE_CREDENTIALS_FILE, encoding="utf-8") as f:
             data = json.load(f)
         return data.get("claudeAiOauth", {}).get("accessToken")
     except (FileNotFoundError, json.JSONDecodeError, IOError, AttributeError):
@@ -232,7 +237,7 @@ def read_codex_token() -> tuple[str, str] | None:
     beyond its existing credential store.
     """
     try:
-        with open(CODEX_AUTH_FILE) as f:
+        with open(CODEX_AUTH_FILE, encoding="utf-8") as f:
             data = json.load(f)
         tokens = data.get("tokens", {})
         token = tokens.get("access_token")
@@ -340,7 +345,7 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
 
     for path, _mtime in files[:8]:
         try:
-            with open(path, "r", errors="ignore") as f:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 lines = f.read().splitlines()
         except (IOError, OSError):
             continue
@@ -426,12 +431,17 @@ def refresh_usage(providers: set[str] | None = None) -> str:
 
         claude_usage = fetch_claude_usage_live() if "claude" in requested else None
         if "claude" in requested and claude_usage is None:
+            # Resolved to an absolute path first: on Windows `claude` is a
+            # `claude.cmd` npm shim, and CreateProcess only appends `.exe` to a
+            # bare name, so spawning it by name fails with FileNotFoundError.
+            claude_cli = shutil.which("claude")
             try:
                 result = subprocess.run(
-                    ["claude", "-p", "/usage"],
+                    [claude_cli or "claude", "-p", "/usage"],
                     capture_output=True,
                     text=True,
                     timeout=CLAUDE_TIMEOUT_SECONDS,
+                    creationflags=NO_WINDOW_FLAGS,
                 )
                 claude_usage = parse_usage_output(result.stdout) or None
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
