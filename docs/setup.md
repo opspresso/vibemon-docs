@@ -48,6 +48,20 @@ curl -fsSL https://docs.vibemon.io/install.py | python3 - --all
 ```bash
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
 ```
+
+**On Windows, use PowerShell:**
+```powershell
+& ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --claude --token my_workspace_01
+& ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --all --yes
+```
+The same flags apply. `curl ... | python3` is not usable there: Windows has no
+`python3` on `PATH`, and Windows PowerShell 5.1 re-encodes piped text with the
+console code page, corrupting the script before Python parses it. `install.ps1`
+locates a Python (`py -3`, then `python`), downloads `install.py`, checks it
+against the published `manifest.json`, and runs it with these arguments.
+
+On Windows the installer covers **Claude Code** and **Codex CLI** plus the
+shared `~/.vibemon` scripts; `--kiro` and `--openclaw` are reported as skipped.
 `-y`/`--yes` auto-approves every prompt, including replacing a status line you already configured. It doesn't select a platform by itself, so combine it with a platform flag or `--all`.
 
 A platform flag on its own (`--claude`) runs without prompting but is **not** the same as `--yes`: VibeMon's own scripts are upgraded in place, while anything you own — most importantly an existing `statusLine` — is left alone and reported as unchanged. Pass `--yes` when you do want it replaced.
@@ -68,6 +82,11 @@ curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --all
 ```
 
+```powershell
+# Windows
+& ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --uninstall --claude
+```
+
 This removes VibeMon's hook registrations, its status line, and the scripts it installed. Hooks you added yourself are preserved, and a `statusLine` you've since pointed at your own script is left in place. Your settings in `~/.vibemon/config.json` and `~/.vibemon/statusline.json` are kept so a reinstall doesn't lose your token — delete `~/.vibemon` yourself to remove those too.
 
 `~/.codex/config.toml` is left untouched: its `[features] hooks` and `[tui] status_line` entries are generic Codex settings, not VibeMon's.
@@ -80,9 +99,20 @@ If you prefer an interactive setup with prompts:
 curl -fsSL https://docs.vibemon.io/install.py | python3
 ```
 
+```powershell
+# Windows
+irm https://docs.vibemon.io/install.ps1 | iex
+```
+
 ## Manual Setup
 
 If automatic installation doesn't work, follow the steps below for your platform.
+
+> **On Windows**, the `curl -o` download blocks below need `curl.exe -o` in
+> PowerShell — the bare `curl` name is an alias for `Invoke-WebRequest`, which
+> takes `-OutFile` rather than `-o`. Skip the `chmod +x` lines; Windows has no
+> executable bit. The `settings.json` / `hooks.json` snippets need the Windows
+> forms shown in each section.
 
 ### Step 1: Create Configuration (all tools)
 
@@ -236,6 +266,40 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
 }
 ```
 
+**On Windows, use exec form instead.** PowerShell — which Claude Code uses for
+shell-form commands when Git Bash isn't installed — does not expand `~` in
+argument position, and there is no `python3` on `PATH`. Adding `args` makes
+Claude Code spawn the interpreter directly, with no shell in between:
+
+```json
+{
+  "type": "command",
+  "command": "C:/Users/you/AppData/Local/Programs/Python/Python313/python.exe",
+  "args": ["C:/Users/you/.claude/hooks/vibemon.py"],
+  "async": true,
+  "timeout": 10
+}
+```
+
+`statusLine` has no exec form, so it stays a single command string. Use forward
+slashes (Git Bash eats unquoted backslashes) and quote only what contains a
+space:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "C:/Users/you/AppData/Local/Programs/Python/Python313/python.exe C:/Users/you/.claude/statusline.py"
+  }
+}
+```
+
+If the interpreter path itself contains a space and Git Bash is **not**
+installed, PowerShell needs the call operator in front of the quoted command:
+`& "C:/Program Files/Python313/python.exe" "C:/Users/you/.claude/statusline.py"`.
+Drop the leading `&` when Git Bash is installed — bash reads it as
+backgrounding the command. `install.ps1` picks the right form for you.
+
 **Merge instructions:**
 - If `hooks` key exists, append VibeMon hooks to each event array
 - If `statusLine` key exists, ask your human before replacing
@@ -350,12 +414,27 @@ Merge the following into your existing `~/.codex/hooks.json`:
 }
 ```
 
+**On Windows**, add a `commandWindows` override beside each `command` — Codex's
+hooks.json takes a Windows-only command string, so the POSIX one stays intact:
+
+```json
+{
+  "type": "command",
+  "command": "python3 ~/.codex/hooks/vibemon.py",
+  "commandWindows": "C:/Users/you/AppData/Local/Programs/Python/Python313/python.exe C:/Users/you/.codex/hooks/vibemon.py",
+  "statusMessage": "VibeMon: turn done"
+}
+```
+
 **Notes:**
 - Codex hooks are experimental
-- Official docs currently state Windows support is disabled for hooks
+- Official docs currently state Windows support is disabled for hooks, so the
+  `commandWindows` override stays dormant until Codex enables them
 - Restart your Codex session after updating config files
 
 ### For Kiro IDE (Manual)
+
+> Not supported on Windows yet — `install.py` skips Kiro there.
 
 Download hook files:
 ```bash
@@ -402,6 +481,8 @@ kiro-cli --agent default
 ```
 
 ### For OpenClaw (Manual)
+
+> Not supported on Windows yet — `install.py` skips OpenClaw there.
 
 Download plugin files:
 ```bash
@@ -526,8 +607,19 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 | Plugin not loading | Check `~/.openclaw/openclaw.json` plugins.entries |
 | Plugin disabled | Set `"enabled": true` in vibemon-bridge config |
 
+### Windows
+| Issue | Solution |
+|-------|----------|
+| `python` opens the Microsoft Store | Turn off the `python.exe` / `python3.exe` App execution aliases in Settings > Apps > Advanced app settings, or install Python from python.org |
+| Hooks stopped after a Python upgrade | The hook `command` holds an absolute interpreter path. Re-run the installer |
+| Status line blank or silently failing | Check whether Git Bash is installed. Without it Claude Code uses PowerShell, which needs `& ` before a *quoted* command; with it, that `&` must be removed |
+| Backslashes disappear from a path | Git Bash treats them as escapes. Write hook and status line paths with forward slashes |
+| ESP32 not updating | USB serial is POSIX-only; `serial_port` is ignored on Windows. Use the Desktop app or the ESP32's WiFi/HTTP target instead |
+| Kiro / OpenClaw reported as skipped | Expected — neither is supported on Windows yet |
+
 ## More Information
 
 - Dashboard: https://vibemon.io
 - Install Script: https://docs.vibemon.io/install.py
+- Windows Install Script: https://docs.vibemon.io/install.ps1
 - Setup Guide: https://docs.vibemon.io/setup.md

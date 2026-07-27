@@ -165,7 +165,7 @@ def apply_session_floor(usage: dict[str, Any]) -> dict[str, Any]:
 
 def load_usage_cache(cache_path: str) -> dict[str, Any] | None:
     try:
-        with open(cache_path) as f:
+        with open(cache_path, encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else None
     except (FileNotFoundError, json.JSONDecodeError, IOError):
@@ -277,7 +277,7 @@ def save_usage_cache(
         # provider-level updated_at above.
         payload["ts"] = updated_at
         tmpfile = f"{cache_path}.tmp.{os.getpid()}"
-        with open(tmpfile, "w") as f:
+        with open(tmpfile, "w", encoding="utf-8") as f:
             json.dump(payload, f)
         os.replace(tmpfile, cache_path)
         return True

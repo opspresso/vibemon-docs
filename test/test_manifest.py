@@ -31,7 +31,7 @@ UNMANIFESTED = {
 
 def downloaded_paths() -> set:
     """Every source path install.py fetches, read back out of its own code."""
-    source = (Path(install.__file__)).read_text()
+    source = (Path(install.__file__)).read_text(encoding="utf-8")
     paths = set(re.findall(r'get_file\(f?"([^"{]+)"', source))
     # Some fetches pass a module constant instead of a literal.
     for name in set(re.findall(r"get_file\(([A-Z][A-Z0-9_]*)\)", source)):
@@ -52,11 +52,11 @@ class ManifestTest(unittest.TestCase):
         Run `python3 scripts/generate_manifest.py` to fix a failure here.
         """
         self.assertTrue(MANIFEST_PATH.is_file(), "docs/manifest.json is missing")
-        on_disk = json.loads(MANIFEST_PATH.read_text())
+        on_disk = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
         self.assertEqual(build_manifest(), on_disk)
 
     def test_manifest_hashes_are_sha256_hex(self):
-        manifest = json.loads(MANIFEST_PATH.read_text())
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
         self.assertIsInstance(manifest.get("files"), dict)
         for rel, digest in manifest["files"].items():
             self.assertRegex(digest, r"^[0-9a-f]{64}$", f"bad digest for {rel}")

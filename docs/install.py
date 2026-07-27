@@ -14,6 +14,10 @@ Usage (Non-interactive for AI agents):
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token YOUR_TOKEN
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
 
+Usage (Windows PowerShell):
+  irm https://docs.vibemon.io/install.ps1 | iex
+  & ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --claude
+
 Uninstall:
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
 
@@ -39,6 +43,51 @@ from urllib.request import urlopen
 from urllib.error import URLError
 
 
+IS_WINDOWS = os.name == "nt"
+
+# Whether ANSI escapes reach the terminal. Windows consoles need VT processing
+# turned on explicitly; when that fails, colored() degrades to plain text.
+USE_COLOR = True
+
+
+def setup_console() -> None:
+    """Let this script's UTF-8 symbols and ANSI colors survive a Windows console.
+
+    A default Korean/Western Windows console is cp949/cp1252, which cannot
+    encode the ✓/✗/box-drawing characters used throughout — printing one
+    raises UnicodeEncodeError and aborts the install. Switching the console to
+    UTF-8 (code page 65001) and reconfiguring the streams fixes that; enabling
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING makes the color codes render instead of
+    showing up as literal escapes. No-op everywhere else.
+    """
+    global USE_COLOR
+    if IS_WINDOWS:
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            kernel32.SetConsoleOutputCP(65001)
+            handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                # 0x0004 = ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+            else:
+                # Not a console (redirected/piped). The Desktop app strips ANSI
+                # from captured output either way, so plain text is safe here.
+                USE_COLOR = False
+        except (OSError, AttributeError, ValueError):
+            USE_COLOR = False
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
+setup_console()
+
+
 # Approve every prompt (--yes). This overwrites user-owned settings, so it is
 # never implied by a platform flag.
 AUTO_APPROVE = False
@@ -53,10 +102,10 @@ SKIPPED = None
 
 
 def setup_tty_input():
-    """Reopen stdin from /dev/tty to allow interactive input when piped."""
+    """Reopen stdin from the console device to allow interactive input when piped."""
     if not sys.stdin.isatty():
         try:
-            sys.stdin = open("/dev/tty", "r")
+            sys.stdin = open("CONIN$" if IS_WINDOWS else "/dev/tty", "r")
         except OSError:
             # In non-interactive mode, this is expected and OK
             pass
@@ -91,6 +140,8 @@ STATUSLINE_KEYS = frozenset({
 
 def colored(text: str, color: str) -> str:
     """Return colored text for terminal output."""
+    if not USE_COLOR:
+        return text
     colors = {
         "red": "\033[91m",
         "green": "\033[92m",
@@ -212,7 +263,7 @@ def load_or_create_config(config_path: Path, example_content: str, fallback: dic
         # hold a hand-edited vibemon_token.
         backup_file(config_path)
         try:
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
             print(f"  {colored('!', 'yellow')} {config_path.name} had invalid JSON — falling back to defaults")
@@ -241,13 +292,19 @@ def write_text_atomic(path: Path, content: str, mode: int = None) -> None:
     content lands in a temp file beside the target and is renamed over it with
     os.replace(). The target's existing mode is preserved unless `mode` is given
     (os.replace swaps inodes, so the mode has to be set on the temp file).
+
+    `newline=""` keeps the bytes exactly as given on every platform. Without it
+    Windows rewrites every \\n as \\r\\n, and the installed file's sha256 stops
+    matching manifest.json forever — which pins the Desktop app's drift check
+    to "update available" and makes it reinstall on every check.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if mode is None and path.exists():
         mode = path.stat().st_mode & 0o777
     tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
     try:
-        tmp.write_text(content)
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
         if mode is not None:
             os.chmod(tmp, mode)
         os.replace(tmp, path)
@@ -291,7 +348,7 @@ def load_json_or_backup(path: Path) -> dict:
     """Load JSON from path, copying it to .bak before it gets overwritten."""
     backup_file(path)
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         print(f"  {colored('!', 'yellow')} {path.name} had invalid JSON — starting from an empty config")
         return {}
@@ -403,10 +460,28 @@ def write_file_with_diff(dst: Path, content: str, description: str, executable: 
         dst.parent.mkdir(parents=True, exist_ok=True)
 
         if dst.exists():
-            old_content = dst.read_text()
+            # Compared as bytes, not text: a file an older Windows install
+            # wrote with CRLF decodes to identical *text* while hashing
+            # differently, so a text comparison would report "no changes" and
+            # leave it permanently out of sync with manifest.json.
+            new_bytes = content.encode("utf-8")
+            old_bytes = dst.read_bytes()
+            mode = (dst.stat().st_mode & 0o777) | 0o111 if executable else None
 
-            if old_content == content:
+            if old_bytes == new_bytes:
                 print(f"  {colored('✓', 'green')} {description} (no changes)")
+                return True
+
+            try:
+                old_content = old_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                old_content = ""
+
+            if old_content.replace("\r\n", "\n") == content:
+                # Same text, different bytes — only the line endings differ.
+                # Rewriting is not a user-visible change, so don't prompt.
+                write_text_atomic(dst, content, mode=mode)
+                print(f"  {colored('✓', 'green')} {description} (line endings normalized)")
                 return True
 
             print(f"\n  {colored('!', 'yellow')} {description} already exists")
@@ -416,7 +491,6 @@ def write_file_with_diff(dst: Path, content: str, description: str, executable: 
                 # unattended=True: these are VibeMon-owned scripts, so an
                 # unattended run is an upgrade, not a config overwrite.
                 if ask_yes_no(f"  Overwrite {description}?", unattended=True):
-                    mode = (dst.stat().st_mode & 0o777) | 0o111 if executable else None
                     write_text_atomic(dst, content, mode=mode)
                     print(f"  {colored('✓', 'green')} {description} (updated)")
                     return True
@@ -434,28 +508,35 @@ def write_file_with_diff(dst: Path, content: str, description: str, executable: 
         return False
 
 
-def get_hook_commands(hook_entries: list) -> set:
-    """Extract all command strings from hook entries."""
-    commands = set()
+def get_hook_identities(hook_entries: list) -> set:
+    """Extract the identity of every hook in a list of entries.
+
+    Identity, not the bare `command`: on Windows the hooks use exec form, where
+    `command` is just the Python interpreter and the script lives in `args`.
+    Deduping on `command` alone would mistake any other Python hook of the
+    user's for this one and drop VibeMon's registration entirely.
+    """
+    identities = set()
     for entry in hook_entries:
-        if "hooks" in entry:
-            for hook in entry.get("hooks", []):
-                if "command" in hook:
-                    commands.add(hook["command"])
-        elif "command" in entry:
-            commands.add(entry["command"])
-    return commands
+        hooks = entry.get("hooks") if "hooks" in entry else [entry]
+        for hook in hooks:
+            identity = _hook_identity(hook)
+            if identity:
+                identities.add(identity)
+    return identities
 
 
-def filter_new_hooks(entry: dict, existing_cmds: set) -> dict:
-    """Return entry with already-registered hook commands removed, or None if nothing new remains."""
+def filter_new_hooks(entry: dict, existing_ids: set) -> dict:
+    """Return entry with already-registered hooks removed, or None if nothing new remains."""
     if "hooks" in entry:
-        new_hook_list = [h for h in entry.get("hooks", []) if h.get("command") not in existing_cmds]
+        new_hook_list = [
+            h for h in entry.get("hooks", []) if _hook_identity(h) not in existing_ids
+        ]
         if not new_hook_list:
             return None
         return {**entry, "hooks": new_hook_list}
     elif "command" in entry:
-        return None if entry["command"] in existing_cmds else entry
+        return None if _hook_identity(entry) in existing_ids else entry
     return entry
 
 
@@ -468,11 +549,11 @@ def merge_hooks(existing: dict, new_hooks: dict) -> dict:
             result[event] = new_entries
         else:
             existing_entries = existing[event]
-            existing_cmds = get_hook_commands(existing_entries)
+            existing_ids = get_hook_identities(existing_entries)
             result[event] = existing_entries.copy()
 
             for new_entry in new_entries:
-                filtered_entry = filter_new_hooks(new_entry, existing_cmds)
+                filtered_entry = filter_new_hooks(new_entry, existing_ids)
                 if filtered_entry is not None:
                     result[event].append(filtered_entry)
 
@@ -487,13 +568,20 @@ def _is_vibemon_hook(hook: dict) -> bool:
     """True when a hook entry runs a VibeMon script (Claude/Codex or Kiro format)."""
     if "vibemon.py" in hook.get("command", ""):
         return True
+    if "vibemon.py" in hook.get("commandWindows", ""):
+        return True
     return any("vibemon.py" in arg for arg in hook.get("args", []))
 
 
 def _hook_identity(hook: dict) -> str:
-    """Stable identity for a hook across Claude/Codex (`command`) and Kiro
-    (`command` + `args`) shapes."""
-    return " ".join([hook.get("command", "")] + list(hook.get("args", []))).strip()
+    """Stable identity for a hook across Claude/Codex (`command`, plus Codex's
+    optional `commandWindows` override) and Kiro/exec-form (`command` + `args`)
+    shapes."""
+    parts = [hook.get("command", "")]
+    parts.extend(hook.get("args", []))
+    if hook.get("commandWindows"):
+        parts.append(hook["commandWindows"])
+    return " ".join(parts).strip()
 
 
 def _packaged_identities(entries: list) -> set:
@@ -598,6 +686,140 @@ def merge_kiro_hooks(existing: dict, new_hooks: dict) -> dict:
     return result
 
 
+# ============================================================================
+# Platform adaptation
+#
+# The packaged configs are written for POSIX (`python3 ~/.claude/...`) so the
+# docs can be copy-pasted as-is. Windows can't run them: there is no `python3`
+# on PATH, and PowerShell — which Claude Code uses for shell-form commands when
+# Git Bash isn't installed — does not expand `~` in argument position. So the
+# commands are rewritten at install time, when the real paths are known.
+# ============================================================================
+
+
+def hook_python() -> str:
+    """Interpreter to hard-code into generated hook commands.
+
+    sys.executable is the interpreter running this installer, so it is known to
+    exist and to be able to run the hooks. It also pins the hooks to a specific
+    Python: after a Python upgrade moves the executable, the installer has to
+    be re-run.
+    """
+    return sys.executable or "python"
+
+
+def hook_path(path: Path) -> str:
+    """Absolute path for use inside a hook command string.
+
+    Forward slashes on Windows: Git Bash consumes unquoted backslashes as
+    escapes (Claude Code's own docs require forward slashes here), and the
+    Windows APIs accept them either way.
+    """
+    return str(path).replace("\\", "/")
+
+
+def _shell_quote(value: str) -> str:
+    """Quote a path for a shell-form command, only when it actually needs it."""
+    return f'"{value}"' if " " in value else value
+
+
+def has_git_bash() -> bool:
+    """Whether Claude Code will route shell-form commands through Git Bash.
+
+    Claude Code uses Git Bash when it is installed and PowerShell otherwise,
+    and the two disagree about how to invoke a quoted command.
+
+    A bare `bash` on PATH is not proof: Windows ships WSL's launcher as
+    C:\\Windows\\System32\\bash.exe, which Claude Code does not use. Only a
+    bash that lives inside a Git installation counts.
+    """
+    on_path = shutil.which("bash")
+    if on_path and Path(on_path).parent.parent.name.lower() == "git":
+        return True
+
+    candidates = [
+        Path(base, "Git", "bin", "bash.exe")
+        for base in (
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+            os.environ.get("LOCALAPPDATA"),
+        )
+        if base
+    ]
+    git_exe = shutil.which("git")
+    if git_exe:
+        # <root>/cmd/git.exe or <root>/bin/git.exe -> <root>/bin/bash.exe
+        candidates.append(Path(git_exe).parent.parent / "bin" / "bash.exe")
+    return any(path.is_file() for path in candidates)
+
+
+def windows_shell_command(python: str, script: str) -> str:
+    """Build a shell-form command the shell Claude Code picks can actually run.
+
+    Unquoted forward-slash paths run in both Git Bash and PowerShell, and so
+    does a quoted *argument*, so most commands stay shell-agnostic. Only a
+    quoted first token forces a choice: PowerShell needs the call operator `&`
+    in front of it, which Git Bash would read as backgrounding the command.
+    """
+    command = f"{_shell_quote(python)} {_shell_quote(script)}"
+    if " " in python and not has_git_bash():
+        return f"& {command}"
+    return command
+
+
+def adapt_claude_settings(settings: dict) -> dict:
+    """Rewrite the packaged Claude Code config for the running platform.
+
+    Identity on POSIX. On Windows the hooks move to exec form (`command` plus
+    `args`), which Claude Code spawns directly — no shell, so nothing to expand
+    and nothing to quote. statusLine has no exec form, so it stays a shell
+    string. Mutates and returns `settings`.
+    """
+    if not IS_WINDOWS:
+        return settings
+
+    python = hook_python()
+    hook_script = hook_path(Path.home() / ".claude" / "hooks" / "vibemon.py")
+    statusline_script = hook_path(Path.home() / ".claude" / "statusline.py")
+
+    for entries in settings.get("hooks", {}).values():
+        for entry in entries:
+            for hook in entry.get("hooks", []):
+                if "vibemon.py" in hook.get("command", ""):
+                    hook["command"] = python
+                    hook["args"] = [hook_script]
+
+    status_line = settings.get("statusLine")
+    if isinstance(status_line, dict) and "statusline.py" in status_line.get("command", ""):
+        status_line["command"] = windows_shell_command(python, statusline_script)
+
+    return settings
+
+
+def adapt_codex_hooks(hooks_config: dict) -> dict:
+    """Add Codex's Windows-only `commandWindows` override to each packaged hook.
+
+    Codex's hooks.json takes a separate command string for Windows beside the
+    POSIX one, so the packaged `command` stays intact and the override is used
+    as soon as Codex enables hooks there. Mutates and returns `hooks_config`.
+    """
+    if not IS_WINDOWS:
+        return hooks_config
+
+    command = "{} {}".format(
+        _shell_quote(hook_python()),
+        _shell_quote(hook_path(Path.home() / ".codex" / "hooks" / "vibemon.py")),
+    )
+
+    for entries in hooks_config.get("hooks", {}).values():
+        for entry in entries:
+            for hook in entry.get("hooks", []):
+                if "vibemon.py" in hook.get("command", ""):
+                    hook["commandWindows"] = command
+
+    return hooks_config
+
+
 class FileSource:
     """Abstract file source for local or remote files."""
 
@@ -626,7 +848,7 @@ class FileSource:
             verify_content(path, content)
             return content
         else:
-            return (self.local_dir / path).read_text()
+            return (self.local_dir / path).read_text(encoding="utf-8")
 
 
 def is_tool_installed(command: str, home_dir: Path) -> bool:
@@ -716,7 +938,7 @@ def configure_statusline_config(source: FileSource) -> None:
         print("  Creating new config at ~/.vibemon/statusline.json")
         if config_path.exists():
             try:
-                legacy = json.loads(config_path.read_text())
+                legacy = json.loads(config_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 legacy = {}
             migrated = {k: legacy[k] for k in STATUSLINE_KEYS if k in legacy}
@@ -756,7 +978,11 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
     # Handle settings.json
     print("\nConfiguring settings.json:")
     settings_file = claude_home / "settings.json"
-    new_settings = json.loads(source.get_file("claude/settings.json"))
+    new_settings = adapt_claude_settings(
+        json.loads(source.get_file("claude/settings.json"))
+    )
+    if IS_WINDOWS:
+        print(f"  {colored('✓', 'green')} hooks pinned to {hook_python()}")
 
     if settings_file.exists():
         existing_settings = load_json_or_backup(settings_file)
@@ -915,7 +1141,7 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
 
     print("\nConfiguring hooks.json:")
     hooks_file = codex_home / "hooks.json"
-    new_hooks = json.loads(source.get_file("codex/hooks.json"))
+    new_hooks = adapt_codex_hooks(json.loads(source.get_file("codex/hooks.json")))
 
     if hooks_file.exists():
         existing_hooks = load_json_or_backup(hooks_file)
@@ -935,7 +1161,7 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
     print("\nConfiguring config.toml:")
     config_toml_file = codex_home / "config.toml"
     if config_toml_file.exists():
-        existing_toml = config_toml_file.read_text()
+        existing_toml = config_toml_file.read_text(encoding="utf-8")
         updated_toml = ensure_codex_hooks_enabled(existing_toml)
         updated_toml = ensure_codex_status_line(updated_toml)
         write_text_atomic(config_toml_file, updated_toml)
@@ -953,7 +1179,9 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
 
     print(f"\n{colored('Codex CLI installation complete!', 'green')}")
     print(f"\n{colored('Notes:', 'yellow')}")
-    print("  • Codex hooks are experimental and currently disabled on Windows")
+    print("  • Codex hooks are experimental. Codex CLI still disables them on")
+    print("    Windows, so the installed `commandWindows` override only starts")
+    print("    firing once Codex enables Windows hook support")
     print("  • Restart your Codex session after installation")
     return True
 
@@ -961,6 +1189,9 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
 def install_kiro(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon for Kiro IDE."""
     kiro_home = Path.home() / ".kiro"
+    if IS_WINDOWS:
+        print(f"\n{colored('!', 'yellow')} Kiro IDE is not supported on Windows yet. Skipping.")
+        return SKIPPED
     if not is_tool_installed("kiro", kiro_home):
         print(f"\n{colored('!', 'yellow')} Kiro IDE not detected. Skipping installation.")
         return SKIPPED
@@ -1084,6 +1315,9 @@ def refresh_openclaw_plugin_registry() -> None:
 def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon plugin for OpenClaw."""
     openclaw_home = Path.home() / ".openclaw"
+    if IS_WINDOWS:
+        print(f"\n{colored('!', 'yellow')} OpenClaw is not supported on Windows yet. Skipping.")
+        return SKIPPED
     if not is_tool_installed("openclaw", openclaw_home):
         print(f"\n{colored('!', 'yellow')} OpenClaw not detected. Skipping installation.")
         return SKIPPED
@@ -1243,8 +1477,9 @@ def remove_path(path: Path, description: str) -> None:
 def _uninstall_hooks_from_json(config_file: Path, hooks_key_path: list, label: str) -> None:
     """Strip VibeMon hooks out of a JSON config, leaving user hooks in place.
 
-    `hooks_key_path` locates the hooks map inside the document, e.g. [] for
-    Claude's top-level "hooks", ["hooks"] for Codex's hooks.json wrapper.
+    `hooks_key_path` walks to the object that *contains* the "hooks" map; the
+    map itself is read from there. Both Codex's hooks.json and Kiro's
+    agents/default.json keep it at the top level, so both pass [].
     """
     if not config_file.exists():
         return
@@ -1317,7 +1552,10 @@ def uninstall_codex(source: FileSource = None, cli_token: str = None) -> bool:
         return SKIPPED
 
     print(f"\n{colored('Removing VibeMon from Codex CLI...', 'cyan')}\n")
-    _uninstall_hooks_from_json(codex_home / "hooks.json", ["hooks"], "~/.codex/hooks.json")
+    # [] , not ["hooks"]: hooks.json *is* {"hooks": {...events...}}, so descending
+    # into "hooks" first and then looking for "hooks" again found nothing and
+    # left every VibeMon registration behind.
+    _uninstall_hooks_from_json(codex_home / "hooks.json", [], "~/.codex/hooks.json")
     remove_path(codex_home / "hooks" / "vibemon.py", "~/.codex/hooks/vibemon.py")
     # config.toml keeps [features] hooks and [tui] status_line: both are
     # generic Codex settings that predate and outlive VibeMon.
@@ -1437,6 +1675,10 @@ Examples:
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --codex
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_token
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
+
+  Windows PowerShell:
+    irm https://docs.vibemon.io/install.ps1 | iex
+    & ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --claude
 
   Uninstall:
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude

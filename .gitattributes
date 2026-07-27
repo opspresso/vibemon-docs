@@ -1,0 +1,6 @@
+# Everything under docs/ is published verbatim and hashed into manifest.json,
+# which the installer and the Desktop app compare against the files on disk.
+# Any newline conversion on checkout (Git for Windows defaults to
+# core.autocrlf=true) would change those bytes and break every integrity check,
+# so newline translation is disabled repository-wide.
+* -text

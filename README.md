@@ -50,6 +50,31 @@ curl -fsSL https://docs.vibemon.io/install.py | python3
 
 Or point your AI agent at [`docs/setup.md`](./docs/setup.md) (`https://docs.vibemon.io/setup.md`) and have it follow the instructions directly.
 
+### Windows (PowerShell)
+
+`curl | python3` doesn't work on Windows — there is no `python3` on `PATH`, and Windows PowerShell 5.1 re-encodes piped text with the console code page, which corrupts the script before Python parses it. Use the PowerShell installer instead; it finds a Python, downloads `install.py`, verifies it against `manifest.json`, and runs it.
+
+```powershell
+# Interactive
+irm https://docs.vibemon.io/install.ps1 | iex
+
+# Non-interactive (AI agents, CI)
+& ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --claude --token my_token
+& ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --uninstall --claude
+```
+
+Requires Python 3 from [python.org](https://www.python.org/downloads/windows/) (tick *Add python.exe to PATH*). If `python` opens the Microsoft Store instead of running, turn off the `python.exe` / `python3.exe` entries under **Settings > Apps > Advanced app settings > App execution aliases**.
+
+| Feature | Windows |
+|---------|---------|
+| Claude Code hooks & status line | Supported |
+| Codex CLI hooks | Installed but dormant — Codex CLI still disables hooks on Windows. The installer writes a `commandWindows` override that starts firing once Codex enables them |
+| Kiro IDE, OpenClaw | Not supported yet — the installer skips them |
+| Desktop App & VibeMon cloud targets | Supported |
+| ESP32 USB serial | Not supported — a configured `serial_port` is ignored (HTTP/WiFi still works) |
+
+Windows hooks are written in Claude Code's exec form (`command` + `args`) with the *absolute* path of the Python that ran the installer, because PowerShell doesn't expand `~` in argument position. Re-run the installer after upgrading or moving your Python installation. `~/.vibemon/config.json` is still created mode `0600`, but on Windows that only affects the read-only flag — it is not an access restriction.
+
 ### Local Install
 
 ```bash
@@ -80,7 +105,7 @@ After installation, edit `~/.vibemon/config.json` to configure your targets:
 | `cache_path` | Cache file path for project metadata | `~/.vibemon/cache/projects.json` |
 | `auto_launch` | Auto-launch Desktop App on session start | `true` |
 | `http_urls` | HTTP targets (Desktop App, ESP32 WiFi) | `["http://127.0.0.1:19280"]` |
-| `serial_port` | ESP32 USB serial port (wildcard supported) | `"/dev/cu.usbmodem*"` |
+| `serial_port` | ESP32 USB serial port (wildcard supported; POSIX only, ignored on Windows) | `"/dev/cu.usbmodem*"` |
 | `vibemon_url` | VibeMon cloud API URL | `https://vibemon.io` |
 | `vibemon_token` | VibeMon API access token (from dashboard) | |
 
@@ -101,7 +126,7 @@ Codex uses the same `~/.vibemon/config.json` as Claude Code, Kiro, and the OpenC
 hooks = true
 ```
 
-Then merge [`codex/hooks.json`](./docs/codex/hooks.json) into your existing `~/.codex/hooks.json` (do not overwrite). Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported.
+Then merge [`codex/hooks.json`](./docs/codex/hooks.json) into your existing `~/.codex/hooks.json` (do not overwrite). Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported — on Windows the installer still writes a `commandWindows` override beside each `command`, so the hooks start working as soon as Codex enables them there.
 
 ### OpenClaw Configuration
 
@@ -150,6 +175,10 @@ python3 ~/.claude/hooks/vibemon.py --lock-mode [mode]
 # Reboot ESP32 device
 python3 ~/.claude/hooks/vibemon.py --reboot
 ```
+
+On Windows PowerShell, run the same commands as
+`python "$env:USERPROFILE\.claude\hooks\vibemon.py" --status` — `python3` and
+`~` in argument position don't resolve there.
 
 ## Apps
 
@@ -320,7 +349,7 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 
 `PreToolUse` and `PermissionRequest` are registered without a matcher, so every tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools) triggers a state change. Codex has no `SessionEnd` event; `Stop` (end of turn) is the terminal signal.
 
-Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported.
+Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported. See [Windows (PowerShell)](#windows-powershell) for what the installer writes there in the meantime.
 
 ### Kiro IDE
 
