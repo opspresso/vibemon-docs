@@ -419,6 +419,54 @@ class AdaptCodexHooksTest(unittest.TestCase):
         )
 
 
+KIRO_AGENT = json.loads((DOCS_DIR / "kiro" / "agents" / "default.json").read_text(encoding="utf-8"))
+KIRO_HOOK_FILE = (DOCS_DIR / "kiro" / "hooks" / "vibemon-file-created.kiro.hook").read_text(
+    encoding="utf-8"
+)
+
+
+class AdaptKiroTest(unittest.TestCase):
+    def test_posix_agent_is_unchanged(self):
+        agent = json.loads(json.dumps(KIRO_AGENT))
+        self.assertEqual(install.adapt_kiro_agent(agent), KIRO_AGENT)
+
+    def test_posix_hook_file_is_returned_verbatim(self):
+        """These files are hashed in manifest.json, so POSIX must not touch them."""
+        self.assertEqual(install.adapt_kiro_hook_file(KIRO_HOOK_FILE), KIRO_HOOK_FILE)
+
+    def test_windows_agent_keeps_the_event_name_argument(self):
+        with WindowsFake():
+            agent = install.adapt_kiro_agent(json.loads(json.dumps(KIRO_AGENT)))
+        hook = agent["hooks"]["agentSpawn"][0]
+        self.assertEqual(hook["command"], WindowsFake.PYTHON)
+        self.assertEqual(
+            hook["args"],
+            [f"{WindowsFake.HOME}/.kiro/hooks/vibemon.py", "agentSpawn"],
+        )
+
+    def test_windows_hook_file_command_keeps_the_event_name(self):
+        with WindowsFake():
+            adapted = json.loads(install.adapt_kiro_hook_file(KIRO_HOOK_FILE))
+        self.assertEqual(
+            adapted["then"]["command"],
+            f"{WindowsFake.PYTHON} {WindowsFake.HOME}/.kiro/hooks/vibemon.py fileCreated",
+        )
+        # Everything else about the definition survives the rewrite.
+        self.assertEqual(adapted["when"], {"type": "fileCreated", "patterns": ["**/*"]})
+        self.assertEqual(adapted["then"]["type"], "runCommand")
+
+    def test_windows_hook_file_has_no_tilde_or_python3(self):
+        with WindowsFake():
+            adapted = install.adapt_kiro_hook_file(KIRO_HOOK_FILE)
+        self.assertNotIn("~", adapted)
+        self.assertNotIn("python3", adapted)
+
+    def test_a_hook_file_without_vibemon_is_left_alone(self):
+        other = json.dumps({"then": {"type": "runCommand", "command": "echo hi"}})
+        with WindowsFake():
+            self.assertEqual(install.adapt_kiro_hook_file(other), other)
+
+
 class HookIdentityTest(unittest.TestCase):
     def test_args_and_windows_override_are_part_of_the_identity(self):
         exec_form = {"command": "python.exe", "args": ["C:/x/.claude/hooks/vibemon.py"]}

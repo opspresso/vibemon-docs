@@ -68,12 +68,13 @@ Requires Python 3 from [python.org](https://www.python.org/downloads/windows/) (
 | Feature | Windows |
 |---------|---------|
 | Claude Code hooks & status line | Supported |
+| Kiro IDE hooks | Supported |
 | Codex CLI hooks | Installed but dormant — Codex CLI still disables hooks on Windows. The installer writes a `commandWindows` override that starts firing once Codex enables them |
-| Kiro IDE, OpenClaw | Not supported yet — the installer skips them |
+| OpenClaw | Not supported yet — the installer skips it |
 | Desktop App & VibeMon cloud targets | Supported |
 | ESP32 USB serial | Not supported — a configured `serial_port` is ignored (HTTP/WiFi still works) |
 
-Windows hooks are written in Claude Code's exec form (`command` + `args`) with the *absolute* path of the Python that ran the installer, because PowerShell doesn't expand `~` in argument position. Re-run the installer after upgrading or moving your Python installation. `~/.vibemon/config.json` is still created mode `0600`, but on Windows that only affects the read-only flag — it is not an access restriction.
+Windows hooks are written with the *absolute* path of the Python that ran the installer, because PowerShell doesn't expand `~` in argument position — Claude Code and Kiro use exec form (`command` + `args`), and Kiro's standalone `.kiro.hook` files get an absolute command string. Re-run the installer after upgrading or moving your Python installation. `~/.vibemon/config.json` is still created mode `0600`, but on Windows that only affects the read-only flag — it is not an access restriction.
 
 ### Local Install
 

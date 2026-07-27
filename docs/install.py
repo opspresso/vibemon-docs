@@ -820,6 +820,60 @@ def adapt_codex_hooks(hooks_config: dict) -> dict:
     return hooks_config
 
 
+def adapt_kiro_agent(agent: dict) -> dict:
+    """Point the packaged Kiro agent's hooks at a real interpreter on Windows.
+
+    agents/default.json already uses the exec-form shape (`command` plus
+    `args`, where args[0] is the script and args[1] the event name), so only
+    the interpreter and the script path need substituting. Mutates and returns
+    `agent`.
+    """
+    if not IS_WINDOWS:
+        return agent
+
+    python = hook_python()
+    script = hook_path(Path.home() / ".kiro" / "hooks" / "vibemon.py")
+
+    for entries in agent.get("hooks", {}).values():
+        for hook in entries:
+            args = hook.get("args") or []
+            if args and "vibemon.py" in args[0]:
+                hook["command"] = python
+                hook["args"] = [script, *args[1:]]
+
+    return agent
+
+
+def adapt_kiro_hook_file(content: str) -> str:
+    """Rewrite a standalone .kiro.hook definition's command for Windows.
+
+    Returns `content` untouched on POSIX so the file stays byte-identical to
+    its manifest hash there. On Windows `then.command` is a shell string with
+    no exec form available, so it gets absolute paths — which is why the
+    Desktop app excludes these files from drift detection on Windows.
+
+    The quoting is deliberately conservative: unquoted forward-slash paths run
+    under cmd.exe, Git Bash and PowerShell alike, and quotes are added only
+    where a space forces them.
+    """
+    if not IS_WINDOWS:
+        return content
+
+    hook = json.loads(content)
+    command = hook.get("then", {}).get("command", "")
+    if "vibemon.py" not in command:
+        return content
+
+    # "python3 ~/.kiro/hooks/vibemon.py fileCreated" -> keep the event name
+    event_args = command.split()[2:]
+    hook["then"]["command"] = " ".join([
+        _shell_quote(hook_python()),
+        _shell_quote(hook_path(Path.home() / ".kiro" / "hooks" / "vibemon.py")),
+        *event_args,
+    ])
+    return json.dumps(hook, indent=2) + "\n"
+
+
 class FileSource:
     """Abstract file source for local or remote files."""
 
@@ -1189,9 +1243,6 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
 def install_kiro(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon for Kiro IDE."""
     kiro_home = Path.home() / ".kiro"
-    if IS_WINDOWS:
-        print(f"\n{colored('!', 'yellow')} Kiro IDE is not supported on Windows yet. Skipping.")
-        return SKIPPED
     if not is_tool_installed("kiro", kiro_home):
         print(f"\n{colored('!', 'yellow')} Kiro IDE not detected. Skipping installation.")
         return SKIPPED
@@ -1211,7 +1262,9 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
     # Handle agents/default.json (merge, don't overwrite)
     print("\nConfiguring agents/default.json:")
     agent_file = kiro_home / "agents" / "default.json"
-    new_agent = json.loads(source.get_file("kiro/agents/default.json"))
+    new_agent = adapt_kiro_agent(json.loads(source.get_file("kiro/agents/default.json")))
+    if IS_WINDOWS:
+        print(f"  {colored('✓', 'green')} hooks pinned to {hook_python()}")
 
     if agent_file.exists():
         existing_agent = load_json_or_backup(agent_file)
@@ -1237,7 +1290,7 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
 
     # .kiro.hook files
     for hook_file in KIRO_HOOK_FILES:
-        content = source.get_file(f"kiro/hooks/{hook_file}")
+        content = adapt_kiro_hook_file(source.get_file(f"kiro/hooks/{hook_file}"))
         ok &= write_file_with_diff(kiro_home / "hooks" / hook_file, content, f"~/.kiro/hooks/{hook_file}")
 
     configure_vibemon_config(source, cli_token)

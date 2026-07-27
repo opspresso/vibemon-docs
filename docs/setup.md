@@ -60,8 +60,8 @@ console code page, corrupting the script before Python parses it. `install.ps1`
 locates a Python (`py -3`, then `python`), downloads `install.py`, checks it
 against the published `manifest.json`, and runs it with these arguments.
 
-On Windows the installer covers **Claude Code** and **Codex CLI** plus the
-shared `~/.vibemon` scripts; `--kiro` and `--openclaw` are reported as skipped.
+On Windows the installer covers **Claude Code**, **Codex CLI** and **Kiro IDE**
+plus the shared `~/.vibemon` scripts; `--openclaw` is reported as skipped.
 `-y`/`--yes` auto-approves every prompt, including replacing a status line you already configured. It doesn't select a platform by itself, so combine it with a platform flag or `--all`.
 
 A platform flag on its own (`--claude`) runs without prompting but is **not** the same as `--yes`: VibeMon's own scripts are upgraded in place, while anything you own — most importantly an existing `statusLine` — is left alone and reported as unchanged. Pass `--yes` when you do want it replaced.
@@ -434,8 +434,6 @@ hooks.json takes a Windows-only command string, so the POSIX one stays intact:
 
 ### For Kiro IDE (Manual)
 
-> Not supported on Windows yet — `install.py` skips Kiro there.
-
 Download hook files:
 ```bash
 mkdir -p ~/.kiro/hooks ~/.kiro/agents ~/.vibemon
@@ -473,6 +471,32 @@ Merge the following hooks into your existing `~/.kiro/agents/default.json`:
   }
 }
 ```
+
+**On Windows**, substitute the interpreter and the script path — there is no
+`python3` on `PATH` and `~` is not expanded in argument position:
+
+```json
+{
+  "command": "C:/Users/you/AppData/Local/Programs/Python/Python313/python.exe",
+  "args": ["C:/Users/you/.kiro/hooks/vibemon.py", "agentSpawn"]
+}
+```
+
+The standalone `.kiro.hook` files carry a shell command string rather than an
+argument list, so their `then.command` needs the same substitution:
+
+```json
+{
+  "then": {
+    "type": "runCommand",
+    "command": "C:/Users/you/AppData/Local/Programs/Python/Python313/python.exe C:/Users/you/.kiro/hooks/vibemon.py fileCreated"
+  }
+}
+```
+
+Because those files then differ from the published copies, the Desktop app
+stops tracking them for updates on Windows — re-run the installer after a
+VibeMon release to pick up changes to them.
 
 Activate the default agent so the merged hooks take effect:
 ```bash
@@ -615,7 +639,8 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 | Status line blank or silently failing | Check whether Git Bash is installed. Without it Claude Code uses PowerShell, which needs `& ` before a *quoted* command; with it, that `&` must be removed |
 | Backslashes disappear from a path | Git Bash treats them as escapes. Write hook and status line paths with forward slashes |
 | ESP32 not updating | USB serial is POSIX-only; `serial_port` is ignored on Windows. Use the Desktop app or the ESP32's WiFi/HTTP target instead |
-| Kiro / OpenClaw reported as skipped | Expected — neither is supported on Windows yet |
+| OpenClaw reported as skipped | Expected — OpenClaw is not supported on Windows yet |
+| Kiro `.kiro.hook` files never flagged as out of date | Expected — they hold an absolute interpreter path on Windows, so the Desktop app can't compare them to the published copies. Re-run the installer after a release |
 
 ## More Information
 
