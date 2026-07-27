@@ -13,6 +13,10 @@ import install  # noqa: E402
 from install import ensure_codex_status_line, remove_stale_vibemon_hooks  # noqa: E402
 
 
+# Windows has no POSIX permission bits — os.chmod there only toggles a
+# read-only attribute, so st_mode always reads back 0o666.
+POSIX_ONLY = unittest.skipIf(os.name == "nt", "POSIX file modes")
+
 VIBEMON_ENTRY = {
     "hooks": [
         {"type": "command", "command": "python3 ~/.codex/hooks/vibemon.py"}
@@ -222,11 +226,13 @@ class WriteTextAtomicTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / "settings.json"
 
+    @POSIX_ONLY
     def test_creates_file_with_requested_mode(self):
         install.write_text_atomic(self.path, "{}\n", mode=0o600)
         self.assertEqual(self.path.read_text(), "{}\n")
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
+    @POSIX_ONLY
     def test_preserves_existing_mode(self):
         self.path.write_text("old")
         os.chmod(self.path, 0o600)
@@ -333,11 +339,31 @@ class WindowsFake:
         return False
 
 
+class PosixFake:
+    """Pin the platform to POSIX, so the "adapters are a no-op here" contract
+    can be asserted from any runner.
+
+    Without it these tests only assert anything on a POSIX machine: on the
+    Windows CI runner the adapters correctly rewrite the config and the
+    assertion inverts.
+    """
+
+    def __enter__(self):
+        self._patch = mock.patch.object(install, "IS_WINDOWS", False)
+        self._patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._patch.stop()
+        return False
+
+
 class AdaptClaudeSettingsTest(unittest.TestCase):
     def test_posix_output_is_byte_identical_to_the_packaged_file(self):
         """Existing POSIX installs must not see a single changed character."""
         settings = json.loads(json.dumps(CLAUDE_SETTINGS))
-        self.assertEqual(install.adapt_claude_settings(settings), CLAUDE_SETTINGS)
+        with PosixFake():
+            self.assertEqual(install.adapt_claude_settings(settings), CLAUDE_SETTINGS)
 
     def test_windows_hooks_use_exec_form(self):
         with WindowsFake():
@@ -406,7 +432,8 @@ class WindowsShellCommandTest(unittest.TestCase):
 class AdaptCodexHooksTest(unittest.TestCase):
     def test_posix_output_is_unchanged(self):
         hooks = json.loads(json.dumps(CODEX_HOOKS))
-        self.assertEqual(install.adapt_codex_hooks(hooks), CODEX_HOOKS)
+        with PosixFake():
+            self.assertEqual(install.adapt_codex_hooks(hooks), CODEX_HOOKS)
 
     def test_windows_override_is_added_beside_the_posix_command(self):
         with WindowsFake():
@@ -428,11 +455,13 @@ KIRO_HOOK_FILE = (DOCS_DIR / "kiro" / "hooks" / "vibemon-file-created.kiro.hook"
 class AdaptKiroTest(unittest.TestCase):
     def test_posix_agent_is_unchanged(self):
         agent = json.loads(json.dumps(KIRO_AGENT))
-        self.assertEqual(install.adapt_kiro_agent(agent), KIRO_AGENT)
+        with PosixFake():
+            self.assertEqual(install.adapt_kiro_agent(agent), KIRO_AGENT)
 
     def test_posix_hook_file_is_returned_verbatim(self):
         """These files are hashed in manifest.json, so POSIX must not touch them."""
-        self.assertEqual(install.adapt_kiro_hook_file(KIRO_HOOK_FILE), KIRO_HOOK_FILE)
+        with PosixFake():
+            self.assertEqual(install.adapt_kiro_hook_file(KIRO_HOOK_FILE), KIRO_HOOK_FILE)
 
     def test_windows_agent_keeps_the_event_name_argument(self):
         with WindowsFake():
