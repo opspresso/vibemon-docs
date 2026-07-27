@@ -13,11 +13,23 @@ Usage (Non-interactive for AI agents):
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --openclaw
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token YOUR_TOKEN
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
+
+Uninstall:
+  curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
+
+Exit status is 0 only when every selected platform installed cleanly. A
+platform whose tool isn't present is reported as skipped, not as a failure.
+
+Downloaded files are checked against the published manifest.json before they
+are written. install.py cannot verify itself — the Desktop app does that
+against the manifest's "installer" hash before running it.
 """
 
 import argparse
 import difflib
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -27,8 +39,17 @@ from urllib.request import urlopen
 from urllib.error import URLError
 
 
-# Global flag for non-interactive mode (auto-approve all prompts)
+# Approve every prompt (--yes). This overwrites user-owned settings, so it is
+# never implied by a platform flag.
 AUTO_APPROVE = False
+
+# No usable prompt available: a platform flag was given, or stdin isn't a TTY.
+# Prompts resolve to their `unattended` answer instead of blocking on input().
+NON_INTERACTIVE = False
+
+# Returned by an installer when its tool isn't present. Distinct from False so
+# "Kiro isn't installed here" doesn't read as "the install failed".
+SKIPPED = None
 
 
 def setup_tty_input():
@@ -48,6 +69,15 @@ CONFIG_EXAMPLE_FILE = "vibemon/config.example.json"
 
 # Claude Code statusline display configuration example file
 STATUSLINE_EXAMPLE_FILE = "vibemon/statusline.example.json"
+
+# Kiro's standalone .kiro.hook definitions; installed and removed as a set.
+KIRO_HOOK_FILES = (
+    "vibemon-prompt-submit.kiro.hook",
+    "vibemon-agent-stop.kiro.hook",
+    "vibemon-file-created.kiro.hook",
+    "vibemon-file-edited.kiro.hook",
+    "vibemon-file-deleted.kiro.hook",
+)
 
 # All recognized statusline-only config keys, used to migrate values out of
 # a pre-split single config.json into the new statusline.json.
@@ -72,11 +102,19 @@ def colored(text: str, color: str) -> str:
     return f"{colors.get(color, '')}{text}{colors['reset']}"
 
 
-def ask_yes_no(question: str, default: bool = True) -> bool:
-    """Ask a yes/no question and return the answer."""
-    global AUTO_APPROVE
+def ask_yes_no(question: str, default: bool = True, unattended: bool = None) -> bool:
+    """Ask a yes/no question and return the answer.
+
+    `unattended` is the answer used when there is no usable prompt
+    (NON_INTERACTIVE without --yes); it falls back to `default`. Pass
+    unattended=False for prompts that would replace user-owned configuration,
+    so an unattended run leaves it alone instead of silently overwriting it.
+    """
+    global AUTO_APPROVE, NON_INTERACTIVE
     if AUTO_APPROVE:
         return True
+    if NON_INTERACTIVE:
+        return default if unattended is None else unattended
     suffix = "[Y/n]" if default else "[y/N]"
     while True:
         try:
@@ -110,7 +148,7 @@ def warn_if_invalid_token(token: str) -> None:
 
 def configure_token(config: dict, cli_token: str = None) -> dict:
     """Configure VibeMon API token. Uses CLI token if provided, otherwise interactive."""
-    global AUTO_APPROVE
+    global AUTO_APPROVE, NON_INTERACTIVE
     current_token = config.get("vibemon_token", "")
 
     print(f"\n{colored('VibeMon API Token Configuration:', 'cyan')}")
@@ -122,8 +160,8 @@ def configure_token(config: dict, cli_token: str = None) -> dict:
         print(f"  {colored('✓', 'green')} Token set from CLI argument")
         return config
 
-    # Non-interactive mode without token: keep existing or skip
-    if AUTO_APPROVE:
+    # No prompt available and no --token: keep whatever is already configured.
+    if AUTO_APPROVE or NON_INTERACTIVE:
         if current_token:
             print(f"  {colored('✓', 'green')} Token unchanged: {mask_token(current_token)}")
         else:
@@ -170,18 +208,14 @@ def load_or_create_config(config_path: Path, example_content: str, fallback: dic
     backward compatibility with existing callers.
     """
     if config_path.exists():
+        # Copy it aside before the defaults below get saved over it — it may
+        # hold a hand-edited vibemon_token.
+        backup_file(config_path)
         try:
             with open(config_path) as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            # Back up the corrupted file before the defaults below get
-            # saved over it — it may hold a hand-edited vibemon_token.
-            backup_path = config_path.with_name(config_path.name + ".bak")
-            try:
-                backup_path.write_text(config_path.read_text())
-                print(f"  {colored('!', 'yellow')} {config_path.name} had invalid JSON, backed up to {backup_path.name}")
-            except OSError as e:
-                print(f"  {colored('✗', 'red')} Failed to back up {config_path.name}: {e}")
+            print(f"  {colored('!', 'yellow')} {config_path.name} had invalid JSON — falling back to defaults")
 
     # Parse example content
     try:
@@ -200,13 +234,53 @@ def load_or_create_config(config_path: Path, example_content: str, fallback: dic
         }
 
 
-def save_config(config_path: Path, config: dict) -> bool:
+def write_text_atomic(path: Path, content: str, mode: int = None) -> None:
+    """Write `content` to `path` atomically.
+
+    A half-written settings.json costs the user their whole tool config, so the
+    content lands in a temp file beside the target and is renamed over it with
+    os.replace(). The target's existing mode is preserved unless `mode` is given
+    (os.replace swaps inodes, so the mode has to be set on the temp file).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if mode is None and path.exists():
+        mode = path.stat().st_mode & 0o777
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    try:
+        tmp.write_text(content)
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+# Paths already copied to .bak this run, so re-entrant installers back a file
+# up once — before the first modification — rather than after a later one.
+BACKED_UP = set()
+
+
+def backup_file(path: Path) -> None:
+    """Copy `path` to `path`.bak once per run, before it is first modified."""
+    if not path.exists() or str(path) in BACKED_UP:
+        return
+    BACKED_UP.add(str(path))
+    backup_path = path.with_name(path.name + ".bak")
+    try:
+        shutil.copy2(path, backup_path)
+        print(f"  {colored('✓', 'green')} backed up {path.name} -> {backup_path.name}")
+    except OSError as e:
+        print(f"  {colored('!', 'yellow')} Could not back up {path.name}: {e}")
+
+
+def save_config(config_path: Path, config: dict, mode: int = None) -> bool:
     """Save config to file."""
     try:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
-            f.write("\n")
+        write_text_atomic(config_path, json.dumps(config, indent=2) + "\n", mode=mode)
         return True
     except Exception as e:
         print(f"  {colored('✗', 'red')} Failed to save config: {e}")
@@ -214,16 +288,12 @@ def save_config(config_path: Path, config: dict) -> bool:
 
 
 def load_json_or_backup(path: Path) -> dict:
-    """Load JSON from path; if it's corrupt, back it up to .bak before it gets overwritten."""
+    """Load JSON from path, copying it to .bak before it gets overwritten."""
+    backup_file(path)
     try:
         return json.loads(path.read_text())
     except json.JSONDecodeError:
-        backup_path = path.with_name(path.name + ".bak")
-        try:
-            backup_path.write_text(path.read_text())
-            print(f"  {colored('!', 'yellow')} {path.name} had invalid JSON, backed up to {backup_path.name}")
-        except OSError as e:
-            print(f"  {colored('✗', 'red')} Failed to back up {path.name}: {e}")
+        print(f"  {colored('!', 'yellow')} {path.name} had invalid JSON — starting from an empty config")
         return {}
 
 
@@ -234,6 +304,59 @@ def download_file(url: str) -> str:
             return response.read().decode("utf-8")
     except URLError as e:
         raise RuntimeError(f"Failed to download {url}: {e}")
+
+
+MANIFEST_PATH = "manifest.json"
+
+# sha256 of every file the installer copies verbatim, keyed by source path.
+# Empty when running from a local checkout (the checkout is the source of
+# truth) or when manifest.json could not be fetched.
+REMOTE_MANIFEST = {}
+_MANIFEST_LOADED = False
+
+
+class IntegrityError(RuntimeError):
+    """A downloaded file did not match its manifest.json sha256."""
+
+
+def load_manifest(source) -> dict:
+    """Fetch and cache the published sha256 manifest (online mode only).
+
+    A missing manifest is a warning, not a failure: it must not block installs
+    when only the manifest deploy lagged. A manifest that *is* present and
+    disagrees with a download is fatal for that file — see verify_content().
+    """
+    global _MANIFEST_LOADED, REMOTE_MANIFEST
+    if _MANIFEST_LOADED:
+        return REMOTE_MANIFEST
+    _MANIFEST_LOADED = True
+    if not source.is_online:
+        return REMOTE_MANIFEST
+    try:
+        REMOTE_MANIFEST = json.loads(download_file(f"{DOCS_BASE_URL}/{MANIFEST_PATH}"))["files"]
+        print(f"  {colored('✓', 'green')} manifest loaded ({len(REMOTE_MANIFEST)} files)")
+    except (RuntimeError, ValueError, KeyError, TypeError) as e:
+        print(f"  {colored('!', 'yellow')} Could not load manifest.json ({e}) — integrity checks skipped")
+        REMOTE_MANIFEST = {}
+    return REMOTE_MANIFEST
+
+
+def verify_content(path: str, content: str) -> None:
+    """Raise IntegrityError if `content` doesn't match the manifest hash for `path`.
+
+    Paths absent from the manifest (merged configs, config examples) are not
+    covered by design — their installed form never matches a source hash.
+    """
+    expected = REMOTE_MANIFEST.get(path)
+    if not expected:
+        return
+    actual = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    if actual != expected:
+        raise IntegrityError(
+            f"{path} failed its integrity check "
+            f"(expected {expected[:12]}…, got {actual[:12]}…) — nothing was written. "
+            "Retry; if it persists, the published file may be corrupt."
+        )
 
 
 def show_diff(old_content: str, new_content: str, filename: str) -> bool:
@@ -290,10 +413,11 @@ def write_file_with_diff(dst: Path, content: str, description: str, executable: 
             has_diff = show_diff(old_content, content, dst.name)
 
             if has_diff:
-                if ask_yes_no(f"  Overwrite {description}?"):
-                    dst.write_text(content)
-                    if executable:
-                        dst.chmod(dst.stat().st_mode | 0o111)
+                # unattended=True: these are VibeMon-owned scripts, so an
+                # unattended run is an upgrade, not a config overwrite.
+                if ask_yes_no(f"  Overwrite {description}?", unattended=True):
+                    mode = (dst.stat().st_mode & 0o777) | 0o111 if executable else None
+                    write_text_atomic(dst, content, mode=mode)
                     print(f"  {colored('✓', 'green')} {description} (updated)")
                     return True
                 else:
@@ -301,9 +425,7 @@ def write_file_with_diff(dst: Path, content: str, description: str, executable: 
                     return True
             return True
         else:
-            dst.write_text(content)
-            if executable:
-                dst.chmod(dst.stat().st_mode | 0o111)
+            write_text_atomic(dst, content, mode=0o755 if executable else None)
             print(f"  {colored('✓', 'green')} {description}")
             return True
 
@@ -368,39 +490,83 @@ def _is_vibemon_hook(hook: dict) -> bool:
     return any("vibemon.py" in arg for arg in hook.get("args", []))
 
 
-def remove_stale_vibemon_hooks(existing: dict, new_hooks: dict) -> list:
-    """Drop VibeMon hook registrations under events the packaged config no
-    longer uses (e.g. Codex PostToolUse). Leaving them would keep invoking
-    vibemon.py with events the script no longer maps. Only VibeMon's own
-    entries are touched; user hooks under the same events are preserved.
-    Mutates `existing` and returns the list of cleaned event names.
+def _hook_identity(hook: dict) -> str:
+    """Stable identity for a hook across Claude/Codex (`command`) and Kiro
+    (`command` + `args`) shapes."""
+    return " ".join([hook.get("command", "")] + list(hook.get("args", []))).strip()
+
+
+def _packaged_identities(entries: list) -> set:
+    """Every hook identity the packaged config registers under one event."""
+    identities = set()
+    for entry in entries or []:
+        if "hooks" in entry:
+            identities.update(_hook_identity(h) for h in entry.get("hooks", []))
+        else:
+            identities.add(_hook_identity(entry))
+    return identities
+
+
+def _prune_vibemon_hooks(existing: dict, keep_for_event) -> list:
+    """Drop VibeMon hook entries that `keep_for_event(event)` doesn't list.
+
+    `keep_for_event` returns the set of hook identities to preserve under an
+    event; everything else belonging to VibeMon is removed. Only VibeMon's own
+    entries are touched — user hooks under the same events are preserved.
+    Mutates `existing` and returns the list of changed event names.
     """
-    removed_events = []
+    changed_events = []
     for event in list(existing.keys()):
-        if event in new_hooks:
-            continue
+        keep = keep_for_event(event)
         cleaned_entries = []
         changed = False
         for entry in existing[event]:
             if "hooks" in entry:
-                kept = [h for h in entry.get("hooks", []) if not _is_vibemon_hook(h)]
+                kept = [
+                    h for h in entry.get("hooks", [])
+                    if not _is_vibemon_hook(h) or _hook_identity(h) in keep
+                ]
                 if len(kept) != len(entry.get("hooks", [])):
                     changed = True
                     if kept:
                         cleaned_entries.append({**entry, "hooks": kept})
                 else:
                     cleaned_entries.append(entry)
-            elif _is_vibemon_hook(entry):
+            elif _is_vibemon_hook(entry) and _hook_identity(entry) not in keep:
                 changed = True
             else:
                 cleaned_entries.append(entry)
         if changed:
-            removed_events.append(event)
+            changed_events.append(event)
             if cleaned_entries:
                 existing[event] = cleaned_entries
             else:
                 del existing[event]
-    return removed_events
+    return changed_events
+
+
+def remove_stale_vibemon_hooks(existing: dict, new_hooks: dict) -> list:
+    """Drop VibeMon hook registrations the packaged config no longer uses.
+
+    Two kinds of staleness are cleaned:
+      * events the packaged config dropped entirely (e.g. Codex PostToolUse) —
+        leaving them would keep invoking vibemon.py with events the script no
+        longer maps;
+      * VibeMon entries under a still-used event whose command no longer
+        matches the packaged one. merge_hooks() dedupes by command, so moving
+        the hook to a new path would otherwise *add* the new entry and leave
+        the old one pointing at a script the installer just removed.
+
+    Mutates `existing` and returns the list of cleaned event names.
+    """
+    return _prune_vibemon_hooks(
+        existing, lambda event: _packaged_identities(new_hooks.get(event))
+    )
+
+
+def strip_all_vibemon_hooks(existing: dict) -> list:
+    """Remove every VibeMon hook registration, preserving user hooks. Used by --uninstall."""
+    return _prune_vibemon_hooks(existing, lambda event: set())
 
 
 def merge_kiro_hooks(existing: dict, new_hooks: dict) -> dict:
@@ -449,10 +615,16 @@ class FileSource:
                 self.is_online = False
 
     def get_file(self, path: str) -> str:
-        """Get file content from local or remote source."""
+        """Get file content from local or remote source.
+
+        Remote content is checked against manifest.json before any caller can
+        write it to disk; a mismatch raises IntegrityError.
+        """
         if self.is_online:
             url = f"{DOCS_BASE_URL}/{path}"
-            return download_file(url)
+            content = download_file(url)
+            verify_content(path, content)
+            return content
         else:
             return (self.local_dir / path).read_text()
 
@@ -486,7 +658,8 @@ def configure_vibemon_config(source: FileSource, cli_token: str = None) -> str:
 
     config = configure_token(config, cli_token)
 
-    if save_config(config_path, config):
+    # 0600: this file holds the VibeMon API token.
+    if save_config(config_path, config, mode=0o600):
         print(f"  {colored('✓', 'green')} ~/.vibemon/config.json saved")
 
     VIBEMON_CONFIG_CACHE["token"] = config.get("vibemon_token", "")
@@ -562,7 +735,7 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
     claude_home = Path.home() / ".claude"
     if not is_tool_installed("claude", claude_home):
         print(f"\n{colored('!', 'yellow')} Claude Code not detected. Skipping installation.")
-        return False
+        return SKIPPED
 
     print(f"\n{colored('Installing VibeMon for Claude Code...', 'cyan')}\n")
 
@@ -606,21 +779,26 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
             if existing_cmd != new_cmd:
                 print(f"\n  Current statusLine: {colored(existing_cmd, 'yellow')}")
                 print(f"  New statusLine:     {colored(new_cmd, 'cyan')}")
-                if ask_yes_no("Replace statusLine?"):
+                # unattended=False: statusLine is the user's own setting, not a
+                # VibeMon-owned file. An unattended run must not replace it.
+                if ask_yes_no("Replace statusLine?", unattended=False):
                     existing_settings["statusLine"] = new_settings["statusLine"]
                     print(f"  {colored('✓', 'green')} statusLine updated")
                 else:
-                    print(f"  {colored('!', 'yellow')} statusLine unchanged")
+                    hint = " (pass --yes to replace it)" if NON_INTERACTIVE and not AUTO_APPROVE else ""
+                    print(f"  {colored('!', 'yellow')} statusLine unchanged{hint}")
             else:
                 print(f"  {colored('✓', 'green')} statusLine already configured")
         else:
             existing_settings["statusLine"] = new_settings["statusLine"]
             print(f"  {colored('✓', 'green')} statusLine added")
 
-        settings_file.write_text(json.dumps(existing_settings, indent=2) + "\n")
+        write_text_atomic(settings_file, json.dumps(existing_settings, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} hooks merged into settings.json")
     else:
-        settings_file.write_text(json.dumps(new_settings, indent=2) + "\n")
+        # settings.json can hold API keys in its env block; Claude Code creates
+        # it 0600 itself, so match that rather than inheriting the umask.
+        write_text_atomic(settings_file, json.dumps(new_settings, indent=2) + "\n", mode=0o600)
         print(f"  {colored('✓', 'green')} settings.json created")
 
     configure_vibemon_config(source, cli_token)
@@ -718,7 +896,7 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
     codex_home = Path.home() / ".codex"
     if not is_tool_installed("codex", codex_home):
         print(f"\n{colored('!', 'yellow')} Codex CLI not detected. Skipping installation.")
-        return False
+        return SKIPPED
 
     print(f"\n{colored('Installing VibeMon for Codex CLI...', 'cyan')}\n")
 
@@ -748,10 +926,10 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
         if stale:
             print(f"  {colored('✓', 'green')} removed unused VibeMon hooks: {', '.join(stale)}")
         existing_hooks["hooks"] = merge_hooks(existing_map, new_map)
-        hooks_file.write_text(json.dumps(existing_hooks, indent=2) + "\n")
+        write_text_atomic(hooks_file, json.dumps(existing_hooks, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} hooks merged into ~/.codex/hooks.json")
     else:
-        hooks_file.write_text(json.dumps(new_hooks, indent=2) + "\n")
+        write_text_atomic(hooks_file, json.dumps(new_hooks, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} ~/.codex/hooks.json created")
 
     print("\nConfiguring config.toml:")
@@ -760,10 +938,10 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
         existing_toml = config_toml_file.read_text()
         updated_toml = ensure_codex_hooks_enabled(existing_toml)
         updated_toml = ensure_codex_status_line(updated_toml)
-        config_toml_file.write_text(updated_toml)
+        write_text_atomic(config_toml_file, updated_toml)
         print(f"  {colored('✓', 'green')} hooks and status line configured in ~/.codex/config.toml")
     else:
-        config_toml_file.write_text(source.get_file("codex/config.toml"))
+        write_text_atomic(config_toml_file, source.get_file("codex/config.toml"))
         print(f"  {colored('✓', 'green')} ~/.codex/config.toml created")
 
     configure_vibemon_config(source, cli_token)
@@ -785,7 +963,7 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
     kiro_home = Path.home() / ".kiro"
     if not is_tool_installed("kiro", kiro_home):
         print(f"\n{colored('!', 'yellow')} Kiro IDE not detected. Skipping installation.")
-        return False
+        return SKIPPED
 
     print(f"\n{colored('Installing VibeMon for Kiro IDE...', 'cyan')}\n")
 
@@ -821,20 +999,13 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
             existing_agent["hooks"] = new_agent["hooks"]
             print(f"  {colored('✓', 'green')} hooks added to agents/default.json")
 
-        agent_file.write_text(json.dumps(existing_agent, indent=2) + "\n")
+        write_text_atomic(agent_file, json.dumps(existing_agent, indent=2) + "\n")
     else:
-        agent_file.write_text(json.dumps(new_agent, indent=2) + "\n")
+        write_text_atomic(agent_file, json.dumps(new_agent, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} agents/default.json created")
 
     # .kiro.hook files
-    kiro_hook_files = [
-        "vibemon-prompt-submit.kiro.hook",
-        "vibemon-agent-stop.kiro.hook",
-        "vibemon-file-created.kiro.hook",
-        "vibemon-file-edited.kiro.hook",
-        "vibemon-file-deleted.kiro.hook",
-    ]
-    for hook_file in kiro_hook_files:
+    for hook_file in KIRO_HOOK_FILES:
         content = source.get_file(f"kiro/hooks/{hook_file}")
         ok &= write_file_with_diff(kiro_home / "hooks" / hook_file, content, f"~/.kiro/hooks/{hook_file}")
 
@@ -915,7 +1086,7 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     openclaw_home = Path.home() / ".openclaw"
     if not is_tool_installed("openclaw", openclaw_home):
         print(f"\n{colored('!', 'yellow')} OpenClaw not detected. Skipping installation.")
-        return False
+        return SKIPPED
 
     print(f"\n{colored('Installing VibeMon Plugin for OpenClaw...', 'cyan')}\n")
 
@@ -1000,7 +1171,7 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
             existing_config["plugins"]["entries"]["vibemon-bridge"] = vibemon_plugin_config
             print(f"  {colored('✓', 'green')} vibemon-bridge plugin added")
 
-        config_file.write_text(json.dumps(existing_config, indent=2) + "\n")
+        write_text_atomic(config_file, json.dumps(existing_config, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} openclaw.json updated (existing settings preserved)")
     else:
         new_config = {
@@ -1011,7 +1182,7 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
             }
         }
         ensure_plugin_path_registered(new_config, str(plugin_dir))
-        config_file.write_text(json.dumps(new_config, indent=2) + "\n")
+        write_text_atomic(config_file, json.dumps(new_config, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} openclaw.json created")
 
     # Without a registry refresh the gateway keeps booting from a stale
@@ -1058,6 +1229,193 @@ def install_vibemon(source: FileSource, cli_token: str = None) -> bool:
     return True
 
 
+def remove_path(path: Path, description: str) -> None:
+    """Delete a file installed by VibeMon, reporting what happened."""
+    if not path.exists():
+        return
+    try:
+        path.unlink()
+        print(f"  {colored('✓', 'green')} removed {description}")
+    except OSError as e:
+        print(f"  {colored('✗', 'red')} could not remove {description}: {e}")
+
+
+def _uninstall_hooks_from_json(config_file: Path, hooks_key_path: list, label: str) -> None:
+    """Strip VibeMon hooks out of a JSON config, leaving user hooks in place.
+
+    `hooks_key_path` locates the hooks map inside the document, e.g. [] for
+    Claude's top-level "hooks", ["hooks"] for Codex's hooks.json wrapper.
+    """
+    if not config_file.exists():
+        return
+    config = load_json_or_backup(config_file)
+    container = config
+    for key in hooks_key_path:
+        container = container.get(key)
+        if not isinstance(container, dict):
+            return
+    hook_map = container.get("hooks")
+    if not isinstance(hook_map, dict):
+        return
+
+    cleaned = strip_all_vibemon_hooks(hook_map)
+    if not cleaned:
+        print(f"  {colored('✓', 'green')} no VibeMon hooks in {label}")
+        return
+    if not hook_map:
+        container.pop("hooks", None)
+    write_text_atomic(config_file, json.dumps(config, indent=2) + "\n")
+    print(f"  {colored('✓', 'green')} removed VibeMon hooks from {label}: {', '.join(cleaned)}")
+
+
+def uninstall_claude(source: FileSource = None, cli_token: str = None) -> bool:
+    """Remove VibeMon's hooks, statusLine and scripts from Claude Code."""
+    claude_home = Path.home() / ".claude"
+    if not claude_home.exists():
+        print(f"\n{colored('!', 'yellow')} Claude Code not detected. Nothing to remove.")
+        return SKIPPED
+
+    print(f"\n{colored('Removing VibeMon from Claude Code...', 'cyan')}\n")
+    settings_file = claude_home / "settings.json"
+
+    if settings_file.exists():
+        settings = load_json_or_backup(settings_file)
+        changed = []
+
+        hook_map = settings.get("hooks")
+        if isinstance(hook_map, dict):
+            cleaned = strip_all_vibemon_hooks(hook_map)
+            if cleaned:
+                changed.append(f"hooks ({', '.join(cleaned)})")
+            if not hook_map:
+                settings.pop("hooks", None)
+
+        # Only drop statusLine when it is still pointing at VibeMon's script —
+        # a user who switched to their own statusline keeps it.
+        status_line = settings.get("statusLine")
+        if isinstance(status_line, dict) and "statusline.py" in status_line.get("command", ""):
+            del settings["statusLine"]
+            changed.append("statusLine")
+
+        if changed:
+            write_text_atomic(settings_file, json.dumps(settings, indent=2) + "\n")
+            print(f"  {colored('✓', 'green')} settings.json cleaned: {', '.join(changed)}")
+        else:
+            print(f"  {colored('✓', 'green')} settings.json had nothing to remove")
+
+    remove_path(claude_home / "statusline.py", "~/.claude/statusline.py")
+    remove_path(claude_home / "hooks" / "vibemon.py", "~/.claude/hooks/vibemon.py")
+    print(f"\n{colored('Claude Code cleanup complete!', 'green')}")
+    return True
+
+
+def uninstall_codex(source: FileSource = None, cli_token: str = None) -> bool:
+    """Remove VibeMon's hooks and script from Codex CLI."""
+    codex_home = Path.home() / ".codex"
+    if not codex_home.exists():
+        print(f"\n{colored('!', 'yellow')} Codex CLI not detected. Nothing to remove.")
+        return SKIPPED
+
+    print(f"\n{colored('Removing VibeMon from Codex CLI...', 'cyan')}\n")
+    _uninstall_hooks_from_json(codex_home / "hooks.json", ["hooks"], "~/.codex/hooks.json")
+    remove_path(codex_home / "hooks" / "vibemon.py", "~/.codex/hooks/vibemon.py")
+    # config.toml keeps [features] hooks and [tui] status_line: both are
+    # generic Codex settings that predate and outlive VibeMon.
+    print(f"  {colored('!', 'yellow')} left ~/.codex/config.toml alone (generic hooks/status_line settings)")
+    print(f"\n{colored('Codex CLI cleanup complete!', 'green')}")
+    return True
+
+
+def uninstall_kiro(source: FileSource = None, cli_token: str = None) -> bool:
+    """Remove VibeMon's hooks and scripts from Kiro IDE."""
+    kiro_home = Path.home() / ".kiro"
+    if not kiro_home.exists():
+        print(f"\n{colored('!', 'yellow')} Kiro IDE not detected. Nothing to remove.")
+        return SKIPPED
+
+    print(f"\n{colored('Removing VibeMon from Kiro IDE...', 'cyan')}\n")
+    _uninstall_hooks_from_json(
+        kiro_home / "agents" / "default.json", [], "~/.kiro/agents/default.json"
+    )
+    remove_path(kiro_home / "hooks" / "vibemon.py", "~/.kiro/hooks/vibemon.py")
+    for hook_file in KIRO_HOOK_FILES:
+        remove_path(kiro_home / "hooks" / hook_file, f"~/.kiro/hooks/{hook_file}")
+    print(f"\n{colored('Kiro IDE cleanup complete!', 'green')}")
+    return True
+
+
+def uninstall_openclaw(source: FileSource = None, cli_token: str = None) -> bool:
+    """Remove the VibeMon bridge plugin from OpenClaw."""
+    openclaw_home = Path.home() / ".openclaw"
+    if not openclaw_home.exists():
+        print(f"\n{colored('!', 'yellow')} OpenClaw not detected. Nothing to remove.")
+        return SKIPPED
+
+    print(f"\n{colored('Removing VibeMon plugin from OpenClaw...', 'cyan')}\n")
+    plugin_dir = openclaw_home / "extensions" / "vibemon-bridge"
+    config_file = openclaw_home / "openclaw.json"
+
+    if config_file.exists():
+        config = load_json_or_backup(config_file)
+        changed = []
+        plugins = config.get("plugins")
+        if isinstance(plugins, dict):
+            entries = plugins.get("entries")
+            if isinstance(entries, dict) and entries.pop("vibemon-bridge", None) is not None:
+                changed.append("plugins.entries.vibemon-bridge")
+            load = plugins.get("load")
+            if isinstance(load, dict) and isinstance(load.get("paths"), list):
+                kept = [p for p in load["paths"] if p != str(plugin_dir)]
+                if len(kept) != len(load["paths"]):
+                    load["paths"] = kept
+                    changed.append("plugins.load.paths")
+        if changed:
+            write_text_atomic(config_file, json.dumps(config, indent=2) + "\n")
+            print(f"  {colored('✓', 'green')} openclaw.json cleaned: {', '.join(changed)}")
+        else:
+            print(f"  {colored('✓', 'green')} openclaw.json had nothing to remove")
+
+    if plugin_dir.exists():
+        try:
+            shutil.rmtree(plugin_dir)
+            print(f"  {colored('✓', 'green')} removed {plugin_dir}")
+        except OSError as e:
+            print(f"  {colored('✗', 'red')} could not remove {plugin_dir}: {e}")
+
+    print("\nRefreshing OpenClaw plugin registry:")
+    refresh_openclaw_plugin_registry()
+    print(f"\n{colored('OpenClaw cleanup complete!', 'green')}")
+    return True
+
+
+def uninstall_vibemon(source: FileSource = None, cli_token: str = None) -> bool:
+    """Remove the shared ~/.vibemon scripts, keeping user config."""
+    vibemon_home = Path.home() / ".vibemon"
+    if not vibemon_home.exists():
+        print(f"\n{colored('!', 'yellow')} ~/.vibemon not found. Nothing to remove.")
+        return SKIPPED
+
+    print(f"\n{colored('Removing VibeMon shared scripts...', 'cyan')}\n")
+    for name in ("usage.py", "usage_cache.py", "vibemon_core.py"):
+        remove_path(vibemon_home / name, f"~/.vibemon/{name}")
+    # config.json holds the user's token and statusline.json their display
+    # preferences; deleting either would make a reinstall lose real settings.
+    print(f"  {colored('!', 'yellow')} kept ~/.vibemon/config.json and statusline.json "
+          "(your token and display settings)")
+    print(f"    Remove them yourself with: rm -rf ~/.vibemon")
+    print(f"\n{colored('Shared scripts cleanup complete!', 'green')}")
+    return True
+
+
+UNINSTALLERS = {
+    "claude": ("Claude Code", uninstall_claude),
+    "codex": ("Codex CLI", uninstall_codex),
+    "kiro": ("Kiro IDE", uninstall_kiro),
+    "openclaw": ("OpenClaw", uninstall_openclaw),
+    "vibemon": ("VibeMon Scripts", uninstall_vibemon),
+}
+
+
 def valid_token_arg(value: str) -> str:
     """Validate --token format for argparse (8-64 chars: a-z, 0-9, _, -)."""
     if not TOKEN_PATTERN.match(value):
@@ -1079,6 +1437,13 @@ Examples:
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --codex
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_token
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
+
+  Uninstall:
+    curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
+    curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --all
+
+Exit status is 0 only when every selected platform succeeded. Platforms whose
+tool isn't installed are reported as skipped and don't affect the status.
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -1101,35 +1466,106 @@ Examples:
     parser.add_argument("--token", type=valid_token_arg, metavar="TOKEN",
                         help="VibeMon API token (8-64 chars: a-z, 0-9, _, -)")
     parser.add_argument("-y", "--yes", action="store_true",
-                        help="Auto-approve all prompts. Does not select a platform by itself; "
-                             "combine with --claude/--codex/--kiro/--openclaw/--all, "
-                             "otherwise the interactive menu still appears")
+                        help="Auto-approve all prompts, including replacing an existing "
+                             "statusLine. Does not select a platform by itself; combine with "
+                             "--claude/--codex/--kiro/--openclaw/--all, otherwise the "
+                             "interactive menu still appears. Without it, an unattended run "
+                             "leaves user-owned settings untouched")
+    parser.add_argument("--uninstall", action="store_true",
+                        help="Remove VibeMon's hooks, statusLine and scripts for the selected "
+                             "platforms instead of installing. User config in ~/.vibemon is kept")
 
     return parser.parse_args()
 
 
-def run_install(platform_name: str, install_fn, source: FileSource, cli_token: str = None) -> bool:
-    """Run a platform installer, isolating exceptions so one platform's failure doesn't abort the rest."""
+def run_install(platform_name: str, install_fn, source: FileSource, cli_token: str = None):
+    """Run one platform's installer/uninstaller, isolating exceptions so one
+    platform's failure doesn't abort the rest.
+
+    Returns True (done), False (failed) or SKIPPED (tool not present).
+    """
     try:
         return install_fn(source, cli_token)
-    except Exception as e:
-        print(f"\n{colored('✗', 'red')} {platform_name} installation failed: {e}")
+    except IntegrityError as e:
+        print(f"\n{colored('✗', 'red')} {platform_name} aborted: {e}")
         return False
+    except Exception as e:
+        print(f"\n{colored('✗', 'red')} {platform_name} failed: {e}")
+        return False
+
+
+INSTALLERS = {
+    "claude": ("Claude Code", install_claude),
+    "codex": ("Codex CLI", install_codex),
+    "kiro": ("Kiro IDE", install_kiro),
+    "openclaw": ("OpenClaw", install_openclaw),
+    "vibemon": ("VibeMon Scripts", install_vibemon),
+}
+
+# --all covers the four tools; the shared ~/.vibemon scripts ride along with
+# each of them, so "vibemon" is only selected explicitly.
+ALL_PLATFORMS = ("claude", "codex", "kiro", "openclaw")
+
+MENU_CHOICES = [
+    ("1", "claude", "Claude Code"),
+    ("2", "codex", "Codex CLI"),
+    ("3", "kiro", "Kiro IDE"),
+    ("4", "openclaw", "OpenClaw"),
+    ("5", "all", "All"),
+    ("6", "vibemon", "VibeMon scripts only"),
+]
+
+
+def selected_platforms(args) -> list:
+    """Platform keys chosen on the command line, in a stable order."""
+    if args.all:
+        return list(ALL_PLATFORMS)
+    return [key for key in ("claude", "codex", "kiro", "openclaw", "vibemon")
+            if getattr(args, key)]
+
+
+def report_and_exit(results: list, action: str) -> None:
+    """Summarize per-platform outcomes and exit with a status that reflects them.
+
+    Exit 0 requires every selected platform to have succeeded. A partial
+    failure used to exit 0 because any() ignored the failures, which hid broken
+    installs from CI and from the Desktop app.
+    """
+    done = [name for name, result in results if result is True]
+    failed = [name for name, result in results if result is False]
+    skipped = [name for name, result in results if result is SKIPPED]
+
+    if skipped:
+        print(f"\n{colored('!', 'yellow')} Skipped (tool not installed): {', '.join(skipped)}")
+    if failed:
+        if done:
+            print(f"{colored('✓', 'green')} {action} succeeded: {', '.join(done)}")
+        print(f"\n{colored('✗', 'red')} {action} failed: {', '.join(failed)}\n")
+        sys.exit(1)
+    if not done:
+        print(f"\n{colored('!', 'yellow')} Nothing was {action.lower()}ed.\n")
+        sys.exit(1)
+
+    suffix = " Restart your IDE to apply changes." if action == "Install" else ""
+    print(f"\n{colored('Done!', 'green')}{suffix}\n")
 
 
 def main():
     """Main entry point."""
-    global AUTO_APPROVE
+    global AUTO_APPROVE, NON_INTERACTIVE
 
     args = parse_args()
+    platforms = selected_platforms(args)
 
-    # Determine if non-interactive mode (any platform flag provided)
-    non_interactive = args.claude or args.codex or args.kiro or args.openclaw or args.all or args.vibemon
-    AUTO_APPROVE = args.yes or non_interactive
+    # A platform flag means "skip the menu", not "approve overwriting my
+    # config" — only --yes grants that.
+    AUTO_APPROVE = args.yes
 
-    # Enable interactive input when running via curl pipe (only if interactive)
-    if not non_interactive:
+    # Enable interactive input when running via curl pipe (only if a menu is
+    # actually going to be shown), then decide whether prompts are usable.
+    if not platforms:
         setup_tty_input()
+    NON_INTERACTIVE = bool(platforms) or not sys.stdin.isatty()
 
     # Determine if running locally or online
     # Note: __file__ is in globals(), not dir() (which returns local vars inside a function)
@@ -1137,77 +1573,47 @@ def main():
     source = FileSource(script_path)
 
     mode = "online" if source.is_online else "local"
+    action = "Uninstall" if args.uninstall else "Install"
+    registry = UNINSTALLERS if args.uninstall else INSTALLERS
 
     print(f"\n{colored('╔════════════════════════════════════════╗', 'cyan')}")
     print(f"{colored('║', 'cyan')}     VibeMon Installation Script        {colored('║', 'cyan')}")
     print(f"{colored('╚════════════════════════════════════════╝', 'cyan')}")
-    print(f"  Mode: {colored(mode, 'yellow')}")
+    print(f"  Mode: {colored(mode, 'yellow')}  Action: {colored(action.lower(), 'yellow')}")
 
-    results = []
+    if not args.uninstall:
+        load_manifest(source)
 
-    # Non-interactive mode: install based on flags
-    if non_interactive:
-        if args.all:
-            results.append(run_install("Claude Code", install_claude, source, args.token))
-            results.append(run_install("Codex CLI", install_codex, source, args.token))
-            results.append(run_install("Kiro IDE", install_kiro, source, args.token))
-            results.append(run_install("OpenClaw", install_openclaw, source, args.token))
-        else:
-            if args.claude:
-                results.append(run_install("Claude Code", install_claude, source, args.token))
-            if args.codex:
-                results.append(run_install("Codex CLI", install_codex, source, args.token))
-            if args.kiro:
-                results.append(run_install("Kiro IDE", install_kiro, source, args.token))
-            if args.openclaw:
-                results.append(run_install("OpenClaw", install_openclaw, source, args.token))
-            if args.vibemon:
-                results.append(run_install("VibeMon Scripts", install_vibemon, source, args.token))
-    else:
-        # Interactive mode: show menu
-        print("\nSelect platform to install:")
-        print(f"  {colored('1)', 'cyan')} Claude Code")
-        print(f"  {colored('2)', 'cyan')} Codex CLI")
-        print(f"  {colored('3)', 'cyan')} Kiro IDE")
-        print(f"  {colored('4)', 'cyan')} OpenClaw")
-        print(f"  {colored('5)', 'cyan')} All")
+    if not platforms:
+        print(f"\nSelect platform to {action.lower()}:")
+        for key, _, label in MENU_CHOICES:
+            print(f"  {colored(key + ')', 'cyan')} {label}")
         print(f"  {colored('q)', 'cyan')} Quit")
 
+        valid = {key: name for key, name, _ in MENU_CHOICES}
+        valid.update({name: name for _, name, _ in MENU_CHOICES})
         while True:
             try:
-                choice = input("\nYour choice [1/2/3/4/5/q]: ").strip().lower()
+                choice = input("\nYour choice [1/2/3/4/5/6/q]: ").strip().lower()
             except EOFError:
-                print("\nInstallation cancelled.")
+                print("\nCancelled.")
                 sys.exit(0)
-            if choice in ("1", "claude"):
-                results.append(run_install("Claude Code", install_claude, source))
-                break
-            elif choice in ("2", "codex"):
-                results.append(run_install("Codex CLI", install_codex, source))
-                break
-            elif choice in ("3", "kiro"):
-                results.append(run_install("Kiro IDE", install_kiro, source))
-                break
-            elif choice in ("4", "openclaw"):
-                results.append(run_install("OpenClaw", install_openclaw, source))
-                break
-            elif choice in ("5", "all"):
-                results.append(run_install("Claude Code", install_claude, source))
-                results.append(run_install("Codex CLI", install_codex, source))
-                results.append(run_install("Kiro IDE", install_kiro, source))
-                results.append(run_install("OpenClaw", install_openclaw, source))
-                break
-            elif choice in ("q", "quit", "exit"):
-                print("\nInstallation cancelled.")
+            if choice in ("q", "quit", "exit"):
+                print("\nCancelled.")
                 sys.exit(0)
-            else:
-                print("Please enter 1, 2, 3, 4, 5, or q")
+            if choice in valid:
+                picked = valid[choice]
+                platforms = list(ALL_PLATFORMS) if picked == "all" else [picked]
+                break
+            print("Please enter 1, 2, 3, 4, 5, 6, or q")
 
-    if any(results):
-        print(f"\n{colored('Done!', 'green')} Restart your IDE to apply changes.\n")
-    else:
-        print(f"\n{colored('!', 'yellow')} No platforms were installed.\n")
-        sys.exit(1)
+    # args.token is honored in both modes; it used to be dropped whenever the
+    # menu was shown, which then reported "No token configured (use --token)".
+    results = [
+        (registry[key][0], run_install(registry[key][0], registry[key][1], source, args.token))
+        for key in platforms
+    ]
+    report_and_exit(results, action)
 
 
 if __name__ == "__main__":
