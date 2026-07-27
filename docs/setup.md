@@ -48,14 +48,29 @@ curl -fsSL https://docs.vibemon.io/install.py | python3 - --all
 ```bash
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
 ```
-`-y`/`--yes` auto-approves prompts (e.g. overwriting existing files); it doesn't select a platform by itself, so combine it with a platform flag or `--all`.
+`-y`/`--yes` auto-approves every prompt, including replacing a status line you already configured. It doesn't select a platform by itself, so combine it with a platform flag or `--all`.
+
+A platform flag on its own (`--claude`) runs without prompting but is **not** the same as `--yes`: VibeMon's own scripts are upgraded in place, while anything you own — most importantly an existing `statusLine` — is left alone and reported as unchanged. Pass `--yes` when you do want it replaced.
 
 The script will:
-1. Download and install the necessary hook files
-2. Merge hooks into existing config files (preserves your settings)
-3. Configure your token (in `~/.vibemon/config.json` or platform config)
+1. Download and install the necessary hook files, verifying each against the published `manifest.json` before writing it
+2. Merge hooks into existing config files (preserves your settings) — every config it touches is copied to `<name>.bak` first and rewritten atomically
+3. Configure your token (in `~/.vibemon/config.json`, created `0600`)
+
+**Exit status:** `0` only when every selected platform succeeded. A tool that isn't installed is reported as *skipped* and doesn't fail the run; a platform that genuinely failed exits `1`, even if others succeeded.
 
 **That's it!** After installation, restart your IDE to apply changes.
+
+## Uninstall
+
+```bash
+curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
+curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --all
+```
+
+This removes VibeMon's hook registrations, its status line, and the scripts it installed. Hooks you added yourself are preserved, and a `statusLine` you've since pointed at your own script is left in place. Your settings in `~/.vibemon/config.json` and `~/.vibemon/statusline.json` are kept so a reinstall doesn't lose your token — delete `~/.vibemon` yourself to remove those too.
+
+`~/.codex/config.toml` is left untouched: its `[features] hooks` and `[tui] status_line` entries are generic Codex settings, not VibeMon's.
 
 ## Interactive Setup (For Humans)
 
