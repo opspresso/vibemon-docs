@@ -317,6 +317,8 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 
 ## State Mapping
 
+State reporting is edge-driven: a new state start replaces the previous state. Completion hooks are retained only where no later start event reliably restores the state (`PostToolUse`/`PostCompact`) or an explicit turn/session ending must be reported (`Stop`/`SessionEnd`). Claude and Codex subagent `Agent` calls already pass through the matcher-free tool hooks, so separate subagent hooks would only duplicate those transitions.
+
 ### Claude Code
 
 | Event | State |
@@ -325,8 +327,6 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 | UserPromptSubmit | thinking |
 | PreToolUse | working |
 | PostToolUse | thinking |
-| SubagentStart | working |
-| SubagentStop | thinking |
 | PreCompact | packing |
 | PostCompact | thinking |
 | Notification | notification |
@@ -344,15 +344,13 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 | UserPromptSubmit | thinking |
 | PreToolUse | working |
 | PostToolUse | thinking |
-| SubagentStart | working |
-| SubagentStop | thinking |
 | PermissionRequest | notification |
 | PreCompact | packing |
 | PostCompact | thinking |
 | Stop | done |
 | SessionEnd | done |
 
-`SessionStart` covers startup, resume, and clear. `PreToolUse`, `PostToolUse`, and `PermissionRequest` are registered without a matcher; the tool hooks therefore observe every supported local tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools, and other local function tools). `Stop` marks the end of each turn; `SessionEnd` marks the end of the main thread. Informational hooks run in the background, while `SessionEnd` runs synchronously with Codex's three-second maximum timeout.
+`SessionStart` covers startup, resume, and clear. `PreToolUse`, `PostToolUse`, and `PermissionRequest` are registered without a matcher, so every supported local tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools, and other local function tools) is observed. Informational hooks run in the background, while `SessionEnd` runs synchronously with Codex's three-second maximum timeout.
 
 ### Kiro IDE
 

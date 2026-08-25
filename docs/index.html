@@ -590,6 +590,7 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
 
             <section id="states">
                 <h2>State Mapping</h2>
+                <p>State reporting is edge-driven: a new state start replaces the previous state. Completion hooks are retained only when no later start reliably restores the state (<code>PostToolUse</code>/<code>PostCompact</code>) or an explicit ending must be reported (<code>Stop</code>/<code>SessionEnd</code>). Claude and Codex subagent <code>Agent</code> calls already pass through the tool hooks, so separate subagent hooks are omitted.</p>
 
                 <h3>Claude Code</h3>
                 <table>
@@ -599,8 +600,6 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
                         <tr><td><code>PreToolUse</code></td><td>working</td></tr>
                         <tr><td><code>PostToolUse</code></td><td>thinking</td></tr>
-                        <tr><td><code>SubagentStart</code></td><td>working</td></tr>
-                        <tr><td><code>SubagentStop</code></td><td>thinking</td></tr>
                         <tr><td><code>PreCompact</code></td><td>packing</td></tr>
                         <tr><td><code>PostCompact</code></td><td>thinking</td></tr>
                         <tr><td><code>Notification</code></td><td>notification</td></tr>
@@ -619,8 +618,6 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
                         <tr><td><code>PreToolUse</code></td><td>working</td></tr>
                         <tr><td><code>PostToolUse</code></td><td>thinking</td></tr>
-                        <tr><td><code>SubagentStart</code></td><td>working</td></tr>
-                        <tr><td><code>SubagentStop</code></td><td>thinking</td></tr>
                         <tr><td><code>PermissionRequest</code></td><td>notification</td></tr>
                         <tr><td><code>PreCompact</code></td><td>packing</td></tr>
                         <tr><td><code>PostCompact</code></td><td>thinking</td></tr>
@@ -628,7 +625,7 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>SessionEnd</code></td><td>done</td></tr>
                     </tbody>
                 </table>
-                <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>SessionStart</code> covers startup, resume, and clear. <code>PreToolUse</code>, <code>PostToolUse</code>, and <code>PermissionRequest</code> are registered without a matcher; the tool hooks observe every supported local tool call. Informational hooks run in the background; <code>SessionEnd</code> runs synchronously.</p>
+                <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>SessionStart</code> covers startup, resume, and clear. Matcher-free <code>PreToolUse</code>/<code>PostToolUse</code> hooks observe every supported local tool call. Informational hooks run in the background; <code>SessionEnd</code> runs synchronously.</p>
                 <p>After installation, open <code>/hooks</code> and review/trust new or changed VibeMon hook definitions.</p>
 
                 <h3>Kiro IDE</h3>

@@ -383,7 +383,12 @@ class LifecycleConfigTest(unittest.TestCase):
         self.assertEqual(set(CLAUDE_SETTINGS["hooks"]), set(event_map))
         self.assertEqual(event_map["PostToolUse"], "thinking")
         self.assertEqual(event_map["PostCompact"], "thinking")
-        self.assertEqual(event_map["SubagentStop"], "thinking")
+        self.assertNotIn("SubagentStart", event_map)
+        self.assertNotIn("SubagentStop", event_map)
+        self.assertEqual(
+            CLAUDE_SETTINGS["hooks"]["SessionStart"][0]["matcher"],
+            "startup|resume|clear",
+        )
         session_end = CLAUDE_SETTINGS["hooks"]["SessionEnd"][0]["hooks"][0]
         self.assertNotIn("async", session_end)
 
@@ -394,7 +399,8 @@ class LifecycleConfigTest(unittest.TestCase):
         self.assertEqual(set(CODEX_HOOKS["hooks"]), set(event_map))
         self.assertEqual(event_map["PostToolUse"], "thinking")
         self.assertEqual(event_map["PostCompact"], "thinking")
-        self.assertEqual(event_map["SubagentStop"], "thinking")
+        self.assertNotIn("SubagentStart", event_map)
+        self.assertNotIn("SubagentStop", event_map)
         self.assertEqual(
             CODEX_HOOKS["hooks"]["SessionStart"][0]["matcher"],
             "startup|resume|clear",
@@ -427,6 +433,15 @@ class LifecycleConfigTest(unittest.TestCase):
                 html_section,
             ))
             self.assertEqual(html_rows, event_map, heading)
+
+    def test_manual_json_examples_match_packaged_configs(self):
+        setup = (DOCS_DIR / "setup.md").read_text(encoding="utf-8")
+        examples = [
+            json.loads(block)
+            for block in re.findall(r"```json\n(.*?)\n```", setup, re.S)
+        ]
+        self.assertIn(CLAUDE_SETTINGS, examples)
+        self.assertIn(CODEX_HOOKS, examples)
 
 
 class WindowsFake:

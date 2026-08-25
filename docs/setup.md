@@ -154,6 +154,7 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
             "type": "command",
@@ -237,30 +238,6 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
       }
     ],
     "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/vibemon.py",
-            "async": true,
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/vibemon.py",
-            "async": true,
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
       {
         "hooks": [
           {
@@ -378,32 +355,6 @@ Merge the following into your existing `~/.codex/hooks.json`:
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
             "statusMessage": "VibeMon: session start",
-            "async": true,
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: subagent start",
-            "async": true,
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: subagent stop",
             "async": true,
             "timeout": 10
           }

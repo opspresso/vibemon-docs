@@ -45,8 +45,6 @@ EVENT_STATE_MAP: dict[str, str] = {
     "PostCompact": "thinking",
     "Notification": "notification",
     "PermissionRequest": "notification",
-    "SubagentStart": "working",
-    "SubagentStop": "thinking",
     "SessionEnd": "done",
     "Stop": "done",
 }

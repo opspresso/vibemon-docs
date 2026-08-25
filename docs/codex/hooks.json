@@ -14,32 +14,6 @@
         ]
       }
     ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: subagent start",
-            "async": true,
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: subagent stop",
-            "async": true,
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "PreCompact": [
       {
         "hooks": [

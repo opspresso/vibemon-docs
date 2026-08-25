@@ -42,8 +42,6 @@ EVENT_STATE_MAP: dict[str, str] = {
     "PreToolUse": "working",
     "PostToolUse": "thinking",
     "PermissionRequest": "notification",
-    "SubagentStart": "working",
-    "SubagentStop": "thinking",
     "PreCompact": "packing",
     "PostCompact": "thinking",
     "Stop": "done",
@@ -79,7 +77,4 @@ if __name__ == "__main__":
         build_payload=build_payload,
         start_event="SessionStart",
     )
-    # Stop and SubagentStop require JSON on successful exit; an empty object
-    # is valid for every Codex event and has no control effect.
-    print("{}")
     sys.exit(0)

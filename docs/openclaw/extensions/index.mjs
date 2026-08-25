@@ -652,7 +652,8 @@ const plugin = {
     api.on("before_agent_run", onAgentTurnStart);
     api.on("before_agent_start", onAgentTurnStart);
 
-    // Subagent spawned -> working (mirrors SubagentStart on Claude/Codex)
+    // Subagent spawned -> working. OpenClaw exposes this directly; the
+    // Claude/Codex bridges observe the same work through their Agent tool hook.
     api.on("subagent_spawned", (event, ctx) => {
       cancelDoneTimer();
       debug("Subagent spawned -> working");
