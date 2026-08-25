@@ -151,8 +151,8 @@ class VibemonHomeGuardTest(unittest.TestCase):
         self.assertEqual(sent[0]["state"], "start")
 
     def test_unmapped_event_is_skipped(self):
-        # e.g. a PostToolUse registration left behind by an older install
-        sent = run_hook({"hook_event_name": "PostToolUse", "cwd": "/tmp"})
+        # e.g. an obsolete registration left behind by an older install
+        sent = run_hook({"hook_event_name": "ObsoleteEvent", "cwd": "/tmp"})
         self.assertEqual(sent, [])
 
     def test_event_alias_is_normalized_before_state_mapping(self):

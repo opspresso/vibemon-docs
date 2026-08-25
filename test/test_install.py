@@ -1,6 +1,8 @@
 import hashlib
 import json
 import os
+import re
+import runpy
 import sys
 import tempfile
 import unittest
@@ -318,6 +320,18 @@ class BackupFileTest(unittest.TestCase):
         install.backup_file(self.path)
         self.assertEqual(list(Path(self.tmp.name).iterdir()), [])
 
+    def test_failed_backup_stops_and_can_be_retried(self):
+        self.path.write_text("valid")
+        with mock.patch.object(
+            install.shutil, "copy2", side_effect=OSError("permission denied")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Could not back up settings.json"):
+                install.backup_file(self.path)
+
+        self.assertNotIn(str(self.path), install.BACKED_UP)
+        install.backup_file(self.path)
+        self.assertEqual((self.path.with_suffix(".json.bak")).read_text(), "valid")
+
 
 class VerifyContentTest(unittest.TestCase):
     def setUp(self):
@@ -348,6 +362,73 @@ CLAUDE_SETTINGS = json.loads((DOCS_DIR / "claude" / "settings.json").read_text(e
 CODEX_HOOKS = json.loads((DOCS_DIR / "codex" / "hooks.json").read_text(encoding="utf-8"))
 
 
+class LifecycleConfigTest(unittest.TestCase):
+    def _event_maps(self):
+        return {
+            "Claude Code": runpy.run_path(
+                str(DOCS_DIR / "claude" / "hooks" / "vibemon.py")
+            )["EVENT_STATE_MAP"],
+            "Codex CLI": runpy.run_path(
+                str(DOCS_DIR / "codex" / "hooks" / "vibemon.py")
+            )["EVENT_STATE_MAP"],
+            "Kiro IDE": runpy.run_path(
+                str(DOCS_DIR / "kiro" / "hooks" / "vibemon.py")
+            )["EVENT_STATE_MAP"],
+        }
+
+    def test_claude_config_and_adapter_cover_the_same_lifecycle(self):
+        event_map = runpy.run_path(
+            str(DOCS_DIR / "claude" / "hooks" / "vibemon.py")
+        )["EVENT_STATE_MAP"]
+        self.assertEqual(set(CLAUDE_SETTINGS["hooks"]), set(event_map))
+        self.assertEqual(event_map["PostToolUse"], "thinking")
+        self.assertEqual(event_map["PostCompact"], "thinking")
+        self.assertEqual(event_map["SubagentStop"], "thinking")
+        session_end = CLAUDE_SETTINGS["hooks"]["SessionEnd"][0]["hooks"][0]
+        self.assertNotIn("async", session_end)
+
+    def test_codex_config_and_adapter_cover_the_same_lifecycle(self):
+        event_map = runpy.run_path(
+            str(DOCS_DIR / "codex" / "hooks" / "vibemon.py")
+        )["EVENT_STATE_MAP"]
+        self.assertEqual(set(CODEX_HOOKS["hooks"]), set(event_map))
+        self.assertEqual(event_map["PostToolUse"], "thinking")
+        self.assertEqual(event_map["PostCompact"], "thinking")
+        self.assertEqual(event_map["SubagentStop"], "thinking")
+        self.assertEqual(
+            CODEX_HOOKS["hooks"]["SessionStart"][0]["matcher"],
+            "startup|resume|clear",
+        )
+
+    def test_kiro_config_and_adapter_cover_the_same_lifecycle(self):
+        event_map = runpy.run_path(
+            str(DOCS_DIR / "kiro" / "hooks" / "vibemon.py")
+        )["EVENT_STATE_MAP"]
+        triggers = {
+            hook["trigger"] for hook in json.loads(KIRO_HOOK_CONFIG)["hooks"]
+        }
+        self.assertEqual(triggers, set(event_map))
+        self.assertEqual(event_map["PostToolUse"], "thinking")
+
+    def test_readme_and_html_tables_match_hook_adapters(self):
+        readme = (DOCS_DIR.parent / "README.md").read_text(encoding="utf-8")
+        index = (DOCS_DIR / "index.html").read_text(encoding="utf-8")
+
+        for heading, event_map in self._event_maps().items():
+            markdown_section = readme.split(f"### {heading}", 1)[1].split("\n### ", 1)[0]
+            markdown_rows = dict(
+                re.findall(r"^\| ([A-Za-z]+) \| ([a-z]+) \|$", markdown_section, re.M)
+            )
+            self.assertEqual(markdown_rows, event_map, heading)
+
+            html_section = index.split(f"<h3>{heading}</h3>", 1)[1].split("<h3>", 1)[0]
+            html_rows = dict(re.findall(
+                r"<tr><td><code>([A-Za-z]+)</code></td><td>([a-z]+)</td></tr>",
+                html_section,
+            ))
+            self.assertEqual(html_rows, event_map, heading)
+
+
 class WindowsFake:
     """Pretend to be Windows with a known Python and home directory."""
 
@@ -360,6 +441,9 @@ class WindowsFake:
             mock.patch.object(install.sys, "executable", self.PYTHON),
             mock.patch.object(install.Path, "home", staticmethod(lambda: Path(self.HOME))),
             mock.patch.object(install, "has_git_bash", lambda: True),
+            mock.patch.dict(os.environ, {
+                "CLAUDE_CONFIG_DIR": "", "CODEX_HOME": "", "KIRO_HOME": "",
+            }),
         ]
         for patch in self._patches:
             patch.start()
@@ -381,13 +465,47 @@ class PosixFake:
     """
 
     def __enter__(self):
-        self._patch = mock.patch.object(install, "IS_WINDOWS", False)
-        self._patch.start()
+        self._patches = [
+            mock.patch.object(install, "IS_WINDOWS", False),
+            mock.patch.dict(os.environ, {
+                "CLAUDE_CONFIG_DIR": "", "CODEX_HOME": "", "KIRO_HOME": "",
+            }),
+        ]
+        for patch in self._patches:
+            patch.start()
         return self
 
     def __exit__(self, *exc):
-        self._patch.stop()
+        for patch in reversed(self._patches):
+            patch.stop()
         return False
+
+
+class ToolHomeTest(unittest.TestCase):
+    def test_defaults_to_a_directory_under_the_user_home(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": ""}):
+            self.assertEqual(
+                install.tool_home("CODEX_HOME", ".codex"), Path.home() / ".codex"
+            )
+
+    def test_honors_and_expands_the_environment_override(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": "~/codex-work"}):
+            self.assertEqual(
+                install.tool_home("CODEX_HOME", ".codex"),
+                Path.home() / "codex-work",
+            )
+
+    def test_tool_detection_accepts_command_aliases(self):
+        with mock.patch.object(
+            install.shutil,
+            "which",
+            side_effect=lambda command: (
+                "/bin/kiro-cli" if command == "kiro-cli" else None
+            ),
+        ):
+            self.assertTrue(
+                install.is_tool_installed(("kiro", "kiro-cli"), Path("/missing"))
+            )
 
 
 class AdaptClaudeSettingsTest(unittest.TestCase):
@@ -423,6 +541,21 @@ class AdaptClaudeSettingsTest(unittest.TestCase):
         self.assertEqual(
             status_line["command"],
             f"{WindowsFake.PYTHON} {WindowsFake.HOME}/.claude/statusline.py",
+        )
+
+    def test_custom_posix_home_rewrites_hook_and_statusline_commands(self):
+        custom_home = Path("/tmp/Claude Profile")
+        with PosixFake():
+            settings = install.adapt_claude_settings(
+                json.loads(json.dumps(CLAUDE_SETTINGS)), custom_home
+            )
+        hook = settings["hooks"]["SessionStart"][0]["hooks"][0]
+        self.assertEqual(
+            hook["command"], 'python3 "/tmp/Claude Profile/hooks/vibemon.py"'
+        )
+        self.assertEqual(
+            settings["statusLine"]["command"],
+            'python3 "/tmp/Claude Profile/statusline.py"',
         )
 
 
@@ -477,6 +610,16 @@ class AdaptCodexHooksTest(unittest.TestCase):
             f"{WindowsFake.PYTHON} {WindowsFake.HOME}/.codex/hooks/vibemon.py",
         )
 
+    def test_custom_posix_home_rewrites_the_main_command(self):
+        with PosixFake():
+            hooks = install.adapt_codex_hooks(
+                json.loads(json.dumps(CODEX_HOOKS)), Path("/tmp/Codex Profile")
+            )
+        hook = hooks["hooks"]["Stop"][0]["hooks"][0]
+        self.assertEqual(
+            hook["command"], 'python3 "/tmp/Codex Profile/hooks/vibemon.py"'
+        )
+
 
 KIRO_HOOK_CONFIG = (DOCS_DIR / "kiro" / "hooks" / "vibemon.json").read_text(
     encoding="utf-8"
@@ -496,7 +639,13 @@ class AdaptKiroTest(unittest.TestCase):
         self.assertEqual(config["version"], "v1")
         self.assertEqual(
             [hook["trigger"] for hook in config["hooks"]],
-            ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
+            [
+                "SessionStart",
+                "UserPromptSubmit",
+                "PreToolUse",
+                "PostToolUse",
+                "Stop",
+            ],
         )
 
     def test_windows_commands_keep_event_arguments(self):
@@ -513,6 +662,18 @@ class AdaptKiroTest(unittest.TestCase):
             adapted = install.adapt_kiro_hook_config(KIRO_HOOK_CONFIG)
         self.assertNotIn("~", adapted)
         self.assertNotIn("python3", adapted)
+
+    def test_custom_posix_home_rewrites_commands_and_keeps_event_arguments(self):
+        with PosixFake():
+            config = json.loads(
+                install.adapt_kiro_hook_config(
+                    KIRO_HOOK_CONFIG, Path("/tmp/Kiro Profile")
+                )
+            )
+        self.assertEqual(
+            config["hooks"][0]["action"]["command"],
+            'python3 "/tmp/Kiro Profile/hooks/vibemon.py" SessionStart',
+        )
 
     def test_a_hook_config_without_vibemon_is_left_alone(self):
         other = json.dumps({
@@ -588,6 +749,31 @@ class InstallKiroV1Test(unittest.TestCase):
                 json.loads(agent_file.read_text())["hooks"]["stop"],
                 [{"command": "python3", "args": ["~/my-hook.py"]}],
             )
+
+
+class InstallCodexBackupTest(unittest.TestCase):
+    def test_backs_up_existing_config_toml_before_updating_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            codex_home = home / ".codex"
+            codex_home.mkdir()
+            config_file = codex_home / "config.toml"
+            original = 'model = "gpt-test"\n'
+            config_file.write_text(original)
+            source = install.FileSource(DOCS_DIR)
+            install.BACKED_UP.clear()
+
+            with (
+                PosixFake(),
+                mock.patch.object(install.Path, "home", staticmethod(lambda: home)),
+                mock.patch.object(install, "configure_vibemon_config"),
+                mock.patch.object(install, "install_vibemon_shared", return_value=True),
+            ):
+                result = install.install_codex(source)
+
+            self.assertTrue(result)
+            self.assertEqual((codex_home / "config.toml.bak").read_text(), original)
+            install.BACKED_UP.clear()
 
 
 class HookIdentityTest(unittest.TestCase):

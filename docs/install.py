@@ -327,13 +327,15 @@ def backup_file(path: Path) -> None:
     """Copy `path` to `path`.bak once per run, before it is first modified."""
     if not path.exists() or str(path) in BACKED_UP:
         return
-    BACKED_UP.add(str(path))
     backup_path = path.with_name(path.name + ".bak")
     try:
         shutil.copy2(path, backup_path)
+        BACKED_UP.add(str(path))
         print(f"  {colored('✓', 'green')} backed up {path.name} -> {backup_path.name}")
     except OSError as e:
-        print(f"  {colored('!', 'yellow')} Could not back up {path.name}: {e}")
+        message = f"Could not back up {path.name}: {e}"
+        print(f"  {colored('✗', 'red')} {message}")
+        raise RuntimeError(message) from e
 
 
 def save_config(config_path: Path, config: dict, mode: int = None) -> bool:
@@ -639,7 +641,7 @@ def remove_stale_vibemon_hooks(existing: dict, new_hooks: dict) -> list:
     """Drop VibeMon hook registrations the packaged config no longer uses.
 
     Two kinds of staleness are cleaned:
-      * events the packaged config dropped entirely (e.g. Codex PostToolUse) —
+      * events the packaged config dropped entirely after a lifecycle change —
         leaving them would keep invoking vibemon.py with events the script no
         longer maps;
       * VibeMon entries under a still-used event whose command no longer
@@ -752,27 +754,48 @@ def windows_shell_command(python: str, script: str) -> str:
     return command
 
 
-def adapt_claude_settings(settings: dict) -> dict:
+def tool_home(env_var: str, default_dir: str) -> Path:
+    """Resolve a tool's user configuration root, honoring its official override."""
+    configured = os.environ.get(env_var, "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path.home() / default_dir
+
+
+def display_path(path: Path) -> str:
+    """Render paths under the user's home with a compact ~/ prefix."""
+    try:
+        return f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        return str(path)
+
+
+def adapt_claude_settings(settings: dict, claude_home: Path = None) -> dict:
     """Rewrite the packaged Claude Code config for the running platform.
 
-    Identity on POSIX. On Windows the hooks move to exec form (`command` plus
-    `args`), which Claude Code spawns directly — no shell, so nothing to expand
-    and nothing to quote. statusLine has no exec form, so it stays a shell
-    string. Mutates and returns `settings`.
+    Identity for the default POSIX home. A custom CLAUDE_CONFIG_DIR gets
+    absolute shell commands. On Windows the hooks move to exec form (`command`
+    plus `args`), which Claude Code spawns directly — no shell, so nothing to
+    expand and nothing to quote. statusLine has no exec form, so it stays a
+    shell string. Mutates and returns `settings`.
     """
-    if not IS_WINDOWS:
+    claude_home = claude_home or tool_home("CLAUDE_CONFIG_DIR", ".claude")
+    if not IS_WINDOWS and claude_home == Path.home() / ".claude":
         return settings
 
-    python = hook_python()
-    hook_script = hook_path(Path.home() / ".claude" / "hooks" / "vibemon.py")
-    statusline_script = hook_path(Path.home() / ".claude" / "statusline.py")
+    python = hook_python() if IS_WINDOWS else "python3"
+    hook_script = hook_path(claude_home / "hooks" / "vibemon.py")
+    statusline_script = hook_path(claude_home / "statusline.py")
 
     for entries in settings.get("hooks", {}).values():
         for entry in entries:
             for hook in entry.get("hooks", []):
                 if "vibemon.py" in hook.get("command", ""):
-                    hook["command"] = python
-                    hook["args"] = [hook_script]
+                    if IS_WINDOWS:
+                        hook["command"] = python
+                        hook["args"] = [hook_script]
+                    else:
+                        hook["command"] = f"{python} {_shell_quote(hook_script)}"
 
     status_line = settings.get("statusLine")
     if isinstance(status_line, dict) and "statusline.py" in status_line.get("command", ""):
@@ -781,42 +804,47 @@ def adapt_claude_settings(settings: dict) -> dict:
     return settings
 
 
-def adapt_codex_hooks(hooks_config: dict) -> dict:
-    """Add Codex's Windows-only `commandWindows` override to each packaged hook.
+def adapt_codex_hooks(hooks_config: dict, codex_home: Path = None) -> dict:
+    """Adapt packaged Codex hook commands for Windows or a custom CODEX_HOME.
 
-    Codex's hooks.json takes a separate command string for Windows beside the
-    POSIX one, so the packaged `command` stays intact and Windows selects the
-    override. Mutates and returns `hooks_config`.
+    Windows receives a `commandWindows` override beside the packaged POSIX
+    command. A custom POSIX home rewrites `command` to the absolute script
+    path. Mutates and returns `hooks_config`.
     """
-    if not IS_WINDOWS:
+    codex_home = codex_home or tool_home("CODEX_HOME", ".codex")
+    if not IS_WINDOWS and codex_home == Path.home() / ".codex":
         return hooks_config
 
     command = "{} {}".format(
-        _shell_quote(hook_python()),
-        _shell_quote(hook_path(Path.home() / ".codex" / "hooks" / "vibemon.py")),
+        _shell_quote(hook_python() if IS_WINDOWS else "python3"),
+        _shell_quote(hook_path(codex_home / "hooks" / "vibemon.py")),
     )
 
     for entries in hooks_config.get("hooks", {}).values():
         for entry in entries:
             for hook in entry.get("hooks", []):
                 if "vibemon.py" in hook.get("command", ""):
-                    hook["commandWindows"] = command
+                    if IS_WINDOWS:
+                        hook["commandWindows"] = command
+                    else:
+                        hook["command"] = command
 
     return hooks_config
 
 
-def adapt_kiro_hook_config(content: str) -> str:
-    """Rewrite Kiro's v1 global hook commands for Windows.
+def adapt_kiro_hook_config(content: str, kiro_home: Path = None) -> str:
+    """Rewrite Kiro's v1 global hook commands for Windows or a custom home.
 
-    Returns `content` untouched on POSIX so the file stays byte-identical to
-    its manifest hash there. Kiro's `action.command` is a shell string, so on
-    Windows it needs the interpreter and script's absolute paths.
+    Returns `content` untouched for the default POSIX home so the file stays
+    byte-identical to its manifest hash there. Kiro's `action.command` is a
+    shell string, so Windows and KIRO_HOME installs need absolute paths.
 
     The quoting is deliberately conservative: unquoted forward-slash paths run
     under cmd.exe, Git Bash and PowerShell alike, and quotes are added only
     where a space forces them.
     """
-    if not IS_WINDOWS:
+    kiro_home = kiro_home or tool_home("KIRO_HOME", ".kiro")
+    if not IS_WINDOWS and kiro_home == Path.home() / ".kiro":
         return content
 
     config = json.loads(content)
@@ -829,8 +857,8 @@ def adapt_kiro_hook_config(content: str) -> str:
         # "python3 ~/.kiro/hooks/vibemon.py SessionStart" -> keep event args.
         event_args = command.split()[2:]
         action["command"] = " ".join([
-            _shell_quote(hook_python()),
-            _shell_quote(hook_path(Path.home() / ".kiro" / "hooks" / "vibemon.py")),
+            _shell_quote(hook_python() if IS_WINDOWS else "python3"),
+            _shell_quote(hook_path(kiro_home / "hooks" / "vibemon.py")),
             *event_args,
         ])
         changed = True
@@ -868,9 +896,11 @@ class FileSource:
             return (self.local_dir / path).read_text(encoding="utf-8")
 
 
-def is_tool_installed(command: str, home_dir: Path) -> bool:
-    """Check if a tool is installed via its CLI command or existing config directory."""
-    return shutil.which(command) is not None or home_dir.exists()
+def is_tool_installed(commands: str | tuple[str, ...], home_dir: Path) -> bool:
+    """Check for any supported CLI command or an existing config directory."""
+    if isinstance(commands, str):
+        commands = (commands,)
+    return any(shutil.which(command) is not None for command in commands) or home_dir.exists()
 
 
 # Caches the resolved token so ~/.vibemon/config.json is only configured once per run
@@ -971,7 +1001,7 @@ def configure_statusline_config(source: FileSource) -> None:
 
 def install_claude(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon for Claude Code."""
-    claude_home = Path.home() / ".claude"
+    claude_home = tool_home("CLAUDE_CONFIG_DIR", ".claude")
     if not is_tool_installed("claude", claude_home):
         print(f"\n{colored('!', 'yellow')} Claude Code not detected. Skipping installation.")
         return SKIPPED
@@ -986,17 +1016,27 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
 
     # statusline.py -> ~/.claude/statusline.py
     content = source.get_file("claude/statusline.py")
-    ok &= write_file_with_diff(claude_home / "statusline.py", content, "~/.claude/statusline.py", executable=True)
+    ok &= write_file_with_diff(
+        claude_home / "statusline.py",
+        content,
+        display_path(claude_home / "statusline.py"),
+        executable=True,
+    )
 
     # hooks/vibemon.py -> ~/.claude/hooks/vibemon.py
     content = source.get_file("claude/hooks/vibemon.py")
-    ok &= write_file_with_diff(claude_home / "hooks" / "vibemon.py", content, "~/.claude/hooks/vibemon.py", executable=True)
+    ok &= write_file_with_diff(
+        claude_home / "hooks" / "vibemon.py",
+        content,
+        display_path(claude_home / "hooks" / "vibemon.py"),
+        executable=True,
+    )
 
     # Handle settings.json
     print("\nConfiguring settings.json:")
     settings_file = claude_home / "settings.json"
     new_settings = adapt_claude_settings(
-        json.loads(source.get_file("claude/settings.json"))
+        json.loads(source.get_file("claude/settings.json")), claude_home
     )
     if IS_WINDOWS:
         print(f"  {colored('✓', 'green')} hooks pinned to {hook_python()}")
@@ -1117,7 +1157,7 @@ def prepare_codex_config(config_text: str) -> str:
 
 def install_codex(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon for Codex CLI."""
-    codex_home = Path.home() / ".codex"
+    codex_home = tool_home("CODEX_HOME", ".codex")
     if not is_tool_installed("codex", codex_home):
         print(f"\n{colored('!', 'yellow')} Codex CLI not detected. Skipping installation.")
         return SKIPPED
@@ -1133,13 +1173,15 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
     ok = write_file_with_diff(
         codex_home / "hooks" / "vibemon.py",
         content,
-        "~/.codex/hooks/vibemon.py",
+        display_path(codex_home / "hooks" / "vibemon.py"),
         executable=True,
     )
 
     print("\nConfiguring hooks.json:")
     hooks_file = codex_home / "hooks.json"
-    new_hooks = adapt_codex_hooks(json.loads(source.get_file("codex/hooks.json")))
+    new_hooks = adapt_codex_hooks(
+        json.loads(source.get_file("codex/hooks.json")), codex_home
+    )
 
     if hooks_file.exists():
         existing_hooks = load_json_or_backup(hooks_file)
@@ -1150,21 +1192,25 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
         if replaced:
             print(f"  {colored('✓', 'green')} refreshed VibeMon hooks: {', '.join(replaced)}")
         write_text_atomic(hooks_file, json.dumps(existing_hooks, indent=2) + "\n")
-        print(f"  {colored('✓', 'green')} hooks merged into ~/.codex/hooks.json")
+        print(f"  {colored('✓', 'green')} hooks merged into {display_path(hooks_file)}")
     else:
         write_text_atomic(hooks_file, json.dumps(new_hooks, indent=2) + "\n")
-        print(f"  {colored('✓', 'green')} ~/.codex/hooks.json created")
+        print(f"  {colored('✓', 'green')} {display_path(hooks_file)} created")
 
     print("\nConfiguring config.toml:")
     config_toml_file = codex_home / "config.toml"
     if config_toml_file.exists():
+        backup_file(config_toml_file)
         existing_toml = config_toml_file.read_text(encoding="utf-8")
         updated_toml = prepare_codex_config(existing_toml)
         write_text_atomic(config_toml_file, updated_toml)
-        print(f"  {colored('✓', 'green')} status line configured in ~/.codex/config.toml")
+        print(
+            f"  {colored('✓', 'green')} status line configured in "
+            f"{display_path(config_toml_file)}"
+        )
     else:
         write_text_atomic(config_toml_file, source.get_file("codex/config.toml"))
-        print(f"  {colored('✓', 'green')} ~/.codex/config.toml created")
+        print(f"  {colored('✓', 'green')} {display_path(config_toml_file)} created")
 
     configure_vibemon_config(source, cli_token)
     ok &= install_vibemon_shared(source)
@@ -1184,16 +1230,20 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
 def remove_legacy_kiro_hooks(kiro_home: Path) -> None:
     """Remove only VibeMon's IDE 0.x / CLI 2.x hook registrations."""
     _uninstall_hooks_from_json(
-        kiro_home / "agents" / "default.json", [], "~/.kiro/agents/default.json"
+        kiro_home / "agents" / "default.json", [],
+        display_path(kiro_home / "agents" / "default.json"),
     )
     for hook_file in LEGACY_KIRO_HOOK_FILES:
-        remove_path(kiro_home / "hooks" / hook_file, f"~/.kiro/hooks/{hook_file}")
+        remove_path(
+            kiro_home / "hooks" / hook_file,
+            display_path(kiro_home / "hooks" / hook_file),
+        )
 
 
 def install_kiro(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon for Kiro IDE."""
-    kiro_home = Path.home() / ".kiro"
-    if not is_tool_installed("kiro", kiro_home):
+    kiro_home = tool_home("KIRO_HOME", ".kiro")
+    if not is_tool_installed(("kiro", "kiro-cli"), kiro_home):
         print(f"\n{colored('!', 'yellow')} Kiro IDE not detected. Skipping installation.")
         return SKIPPED
 
@@ -1206,16 +1256,23 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
 
     # vibemon.py -> ~/.kiro/hooks/vibemon.py
     content = source.get_file("kiro/hooks/vibemon.py")
-    ok = write_file_with_diff(kiro_home / "hooks" / "vibemon.py", content, "~/.kiro/hooks/vibemon.py", executable=True)
+    ok = write_file_with_diff(
+        kiro_home / "hooks" / "vibemon.py",
+        content,
+        display_path(kiro_home / "hooks" / "vibemon.py"),
+        executable=True,
+    )
 
     print("\nConfiguring global hooks:")
-    hook_config = adapt_kiro_hook_config(source.get_file(KIRO_HOOK_CONFIG_FILE))
+    hook_config = adapt_kiro_hook_config(
+        source.get_file(KIRO_HOOK_CONFIG_FILE), kiro_home
+    )
     if IS_WINDOWS:
         print(f"  {colored('✓', 'green')} hooks pinned to {hook_python()}")
     ok &= write_file_with_diff(
         kiro_home / "hooks" / "vibemon.json",
         hook_config,
-        "~/.kiro/hooks/vibemon.json",
+        display_path(kiro_home / "hooks" / "vibemon.json"),
     )
 
     # Only retire working legacy registrations after the current v1 config is
@@ -1484,7 +1541,7 @@ def _uninstall_hooks_from_json(config_file: Path, hooks_key_path: list, label: s
 
 def uninstall_claude(source: FileSource = None, cli_token: str = None) -> bool:
     """Remove VibeMon's hooks, statusLine and scripts from Claude Code."""
-    claude_home = Path.home() / ".claude"
+    claude_home = tool_home("CLAUDE_CONFIG_DIR", ".claude")
     if not claude_home.exists():
         print(f"\n{colored('!', 'yellow')} Claude Code not detected. Nothing to remove.")
         return SKIPPED
@@ -1517,15 +1574,20 @@ def uninstall_claude(source: FileSource = None, cli_token: str = None) -> bool:
         else:
             print(f"  {colored('✓', 'green')} settings.json had nothing to remove")
 
-    remove_path(claude_home / "statusline.py", "~/.claude/statusline.py")
-    remove_path(claude_home / "hooks" / "vibemon.py", "~/.claude/hooks/vibemon.py")
+    remove_path(
+        claude_home / "statusline.py", display_path(claude_home / "statusline.py")
+    )
+    remove_path(
+        claude_home / "hooks" / "vibemon.py",
+        display_path(claude_home / "hooks" / "vibemon.py"),
+    )
     print(f"\n{colored('Claude Code cleanup complete!', 'green')}")
     return True
 
 
 def uninstall_codex(source: FileSource = None, cli_token: str = None) -> bool:
     """Remove VibeMon's hooks and script from Codex CLI."""
-    codex_home = Path.home() / ".codex"
+    codex_home = tool_home("CODEX_HOME", ".codex")
     if not codex_home.exists():
         print(f"\n{colored('!', 'yellow')} Codex CLI not detected. Nothing to remove.")
         return SKIPPED
@@ -1534,26 +1596,41 @@ def uninstall_codex(source: FileSource = None, cli_token: str = None) -> bool:
     # [] , not ["hooks"]: hooks.json *is* {"hooks": {...events...}}, so descending
     # into "hooks" first and then looking for "hooks" again found nothing and
     # left every VibeMon registration behind.
-    _uninstall_hooks_from_json(codex_home / "hooks.json", [], "~/.codex/hooks.json")
-    remove_path(codex_home / "hooks" / "vibemon.py", "~/.codex/hooks/vibemon.py")
+    _uninstall_hooks_from_json(
+        codex_home / "hooks.json", [], display_path(codex_home / "hooks.json")
+    )
+    remove_path(
+        codex_home / "hooks" / "vibemon.py",
+        display_path(codex_home / "hooks" / "vibemon.py"),
+    )
     # config.toml keeps [features] hooks and [tui] status_line: both are
     # generic Codex settings that predate and outlive VibeMon.
-    print(f"  {colored('!', 'yellow')} left ~/.codex/config.toml alone (generic hooks/status_line settings)")
+    print(
+        f"  {colored('!', 'yellow')} left "
+        f"{display_path(codex_home / 'config.toml')} alone "
+        "(generic hooks/status_line settings)"
+    )
     print(f"\n{colored('Codex CLI cleanup complete!', 'green')}")
     return True
 
 
 def uninstall_kiro(source: FileSource = None, cli_token: str = None) -> bool:
     """Remove VibeMon's hooks and scripts from Kiro IDE."""
-    kiro_home = Path.home() / ".kiro"
+    kiro_home = tool_home("KIRO_HOME", ".kiro")
     if not kiro_home.exists():
         print(f"\n{colored('!', 'yellow')} Kiro IDE not detected. Nothing to remove.")
         return SKIPPED
 
     print(f"\n{colored('Removing VibeMon from Kiro IDE...', 'cyan')}\n")
     remove_legacy_kiro_hooks(kiro_home)
-    remove_path(kiro_home / "hooks" / "vibemon.json", "~/.kiro/hooks/vibemon.json")
-    remove_path(kiro_home / "hooks" / "vibemon.py", "~/.kiro/hooks/vibemon.py")
+    remove_path(
+        kiro_home / "hooks" / "vibemon.json",
+        display_path(kiro_home / "hooks" / "vibemon.json"),
+    )
+    remove_path(
+        kiro_home / "hooks" / "vibemon.py",
+        display_path(kiro_home / "hooks" / "vibemon.py"),
+    )
     print(f"\n{colored('Kiro IDE cleanup complete!', 'green')}")
     return True
 

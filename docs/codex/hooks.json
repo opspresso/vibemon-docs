@@ -2,7 +2,7 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume",
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
             "type": "command",
@@ -27,6 +27,19 @@
         ]
       }
     ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: subagent stop",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [
@@ -34,6 +47,19 @@
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
             "statusMessage": "VibeMon: compacting",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: compacted",
             "async": true,
             "timeout": 10
           }
@@ -60,6 +86,19 @@
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
             "statusMessage": "VibeMon: tool start",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: tool complete",
             "async": true,
             "timeout": 10
           }

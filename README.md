@@ -32,6 +32,8 @@ npx vibemon@latest
 
 Open the app, go to **Settings > AI Tools**, and click **Install** for Claude Code, Codex CLI, Kiro IDE, or OpenClaw. This installs the hooks and writes `~/.vibemon/config.json` for you. See [vibemon-app](https://github.com/opspresso/vibemon-app) for details.
 
+The installer and Desktop App honor each tool's user-config override: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `KIRO_HOME`. Hook commands are rewritten to the resolved directory, including paths that contain spaces. Kiro detection accepts both the IDE's `kiro` command and the CLI's `kiro-cli` command.
+
 ### Non-interactive Install (AI agents, CI)
 
 For headless setups where a GUI app isn't available:
@@ -116,7 +118,7 @@ The Claude Code installer also places a standalone refresher at `~/.vibemon/usag
 
 The reset-countdown fields the hooks attach (`usage5hResetsIn`/`usageWeekResetsIn`/`usageWeekModelResetsIn`) are populated whenever the cache was refreshed via a `resets_at` epoch — either an active Claude Code session's statusline (the official `rate_limits` path), `usage.py`'s direct Anthropic/Codex API queries, or a Codex session log. Only the last-resort `claude -p "/usage"` text fallback lacks a machine-parseable reset time, so the reset countdown is omitted in that case while the usage percentages still update.
 
-Note that the plan-usage fields (`usage5h`/`usageWeek` and their reset countdowns) are sent by the **Claude Code and Codex hooks**, since they both read from the same `usage.py`-refreshed cache (under separate `claude`/`codex` cache keys). The Kiro hook doesn't report usage, and OpenClaw reports context-window usage as `memory` instead.
+Note that the plan-usage fields (`usage5h`/`usageWeek`/`usageWeekModel` and their reset countdowns) are sent by the **Claude Code and Codex hooks**, since they both read from the same `usage.py`-refreshed cache (under separate `claude`/`codex` cache keys). The Kiro hook doesn't report usage, and OpenClaw reports context-window usage as `memory` instead.
 
 ### Codex Configuration
 
@@ -322,8 +324,11 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 | SessionStart | start |
 | UserPromptSubmit | thinking |
 | PreToolUse | working |
+| PostToolUse | thinking |
 | SubagentStart | working |
+| SubagentStop | thinking |
 | PreCompact | packing |
+| PostCompact | thinking |
 | Notification | notification |
 | PermissionRequest | notification |
 | SessionEnd | done |
@@ -338,13 +343,16 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 | SessionStart | start |
 | UserPromptSubmit | thinking |
 | PreToolUse | working |
+| PostToolUse | thinking |
 | SubagentStart | working |
+| SubagentStop | thinking |
 | PermissionRequest | notification |
 | PreCompact | packing |
+| PostCompact | thinking |
 | Stop | done |
 | SessionEnd | done |
 
-`PreToolUse` and `PermissionRequest` are registered without a matcher, so every tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools) triggers a state change. `Stop` marks the end of each turn; `SessionEnd` marks the end of the main thread. Informational hooks run in the background, while `SessionEnd` runs synchronously with Codex's three-second maximum timeout.
+`SessionStart` covers startup, resume, and clear. `PreToolUse`, `PostToolUse`, and `PermissionRequest` are registered without a matcher; the tool hooks therefore observe every supported local tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools, and other local function tools). `Stop` marks the end of each turn; `SessionEnd` marks the end of the main thread. Informational hooks run in the background, while `SessionEnd` runs synchronously with Codex's three-second maximum timeout.
 
 ### Kiro IDE
 
@@ -353,6 +361,7 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 | SessionStart | start |
 | UserPromptSubmit | thinking |
 | PreToolUse | working |
+| PostToolUse | thinking |
 | Stop | done |
 
 ### OpenClaw

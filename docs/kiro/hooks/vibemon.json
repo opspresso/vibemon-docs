@@ -35,6 +35,17 @@
       "enabled": true
     },
     {
+      "name": "VibeMon - Tool Complete",
+      "description": "Return VibeMon to thinking after a tool finishes",
+      "trigger": "PostToolUse",
+      "action": {
+        "type": "command",
+        "command": "python3 ~/.kiro/hooks/vibemon.py PostToolUse"
+      },
+      "timeout": 10,
+      "enabled": true
+    },
+    {
       "name": "VibeMon - Stop",
       "description": "Send the done state to VibeMon when the agent finishes responding",
       "trigger": "Stop",

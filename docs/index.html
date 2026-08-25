@@ -391,6 +391,7 @@
 brew install opspresso/tap/vibemon</code></pre>
                 <p>Or via npm: <code>npx vibemon@latest</code></p>
                 <p>Open the app, go to <strong>Settings &gt; AI Tools</strong>, and click <strong>Install</strong> for Claude Code, Codex CLI, Kiro IDE, or OpenClaw.</p>
+                <p>The installer and Desktop App honor <code>CLAUDE_CONFIG_DIR</code>, <code>CODEX_HOME</code>, and <code>KIRO_HOME</code>. Hook commands are rewritten to the resolved directory, and Kiro is detected through either <code>kiro</code> or <code>kiro-cli</code>.</p>
 
                 <h3>Non-interactive Install (AI agents, CI)</h3>
                 <p>For headless setups where a GUI app isn't available:</p>
@@ -435,9 +436,9 @@ python3 docs/install.py</code></pre>
 
                 <p>The Claude Code installer also places a standalone refresher at <code>~/.vibemon/usage.py</code>. For Claude, it fetches plan usage directly from Anthropic's OAuth usage API using the local Claude Code login token (no active session required), falling back to a <code>claude -p "/usage"</code> subprocess when a token isn't available or the API call fails. For Codex, it queries the same account-level usage API Codex CLI's own <code>/status</code> polls using the local Codex login token, falling back to the newest local session log. Either way it writes the shared <code>~/.vibemon/cache/usage.json</code>, so the Desktop app can run it (<code>python3 ~/.vibemon/usage.py --max-age 600</code>) on startup or on a schedule to keep usage data fresh even when no Claude Code or Codex session is active. Since the <code>claude -p "/usage"</code> fallback is itself a real Claude Code session, the Desktop app sets <code>VIBEMON_SUPPRESS_HOOKS=1</code> in its environment so the spawned session's own hooks don't report status back. Independently of that env var, the hooks also skip any session whose cwd is <code>~/.vibemon</code> itself, so spawners that don't set the variable (older Desktop app versions, manual <code>usage.py</code> runs) can't surface a phantom <code>.vibemon</code> project either.</p>
 
-                <p>The reset-countdown fields the hooks attach (<code>usage5hResetsIn</code>/<code>usageWeekResetsIn</code>) are populated whenever the cache was refreshed via a <code>resets_at</code> epoch — either an active Claude Code session's statusline (the official <code>rate_limits</code> path), <code>usage.py</code>'s direct Anthropic/Codex API queries, or a Codex session log. Only the last-resort <code>claude -p "/usage"</code> text fallback lacks a machine-parseable reset time, so the reset countdown is omitted in that case while the usage percentages still update.</p>
+                <p>The reset-countdown fields the hooks attach (<code>usage5hResetsIn</code>/<code>usageWeekResetsIn</code>/<code>usageWeekModelResetsIn</code>) are populated whenever the cache was refreshed via a <code>resets_at</code> epoch — either an active Claude Code session's statusline (the official <code>rate_limits</code> path), <code>usage.py</code>'s direct Anthropic/Codex API queries, or a Codex session log. Only the last-resort <code>claude -p "/usage"</code> text fallback lacks a machine-parseable reset time, so the reset countdown is omitted in that case while the usage percentages still update.</p>
 
-                <p>Note that the plan-usage fields (<code>usage5h</code>/<code>usageWeek</code> and their reset countdowns) are sent by the <strong>Claude Code and Codex hooks</strong>, since they both read from the same <code>usage.py</code>-refreshed cache (under separate <code>claude</code>/<code>codex</code> cache keys). The Kiro hook doesn't report usage, and OpenClaw reports context-window usage as <code>memory</code> instead.</p>
+                <p>Note that the plan-usage fields (<code>usage5h</code>/<code>usageWeek</code>/<code>usageWeekModel</code> and their reset countdowns) are sent by the <strong>Claude Code and Codex hooks</strong>, since they both read from the same <code>usage.py</code>-refreshed cache (under separate <code>claude</code>/<code>codex</code> cache keys). The Kiro hook doesn't report usage, and OpenClaw reports context-window usage as <code>memory</code> instead.</p>
 
                 <h3>Codex Configuration</h3>
                 <p>Codex uses the same <code>~/.vibemon/config.json</code> as Claude Code and Kiro. Hooks are enabled by default; the installer preserves an explicit <code>[features].hooks = false</code> in <code>~/.codex/config.toml</code>. Merge <a href="./codex/hooks.json">codex/hooks.json</a> into your existing <code>~/.codex/hooks.json</code> (do not overwrite), then open <code>/hooks</code> and review/trust the new definitions.</p>
@@ -597,8 +598,11 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>SessionStart</code></td><td>start</td></tr>
                         <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
                         <tr><td><code>PreToolUse</code></td><td>working</td></tr>
+                        <tr><td><code>PostToolUse</code></td><td>thinking</td></tr>
                         <tr><td><code>SubagentStart</code></td><td>working</td></tr>
+                        <tr><td><code>SubagentStop</code></td><td>thinking</td></tr>
                         <tr><td><code>PreCompact</code></td><td>packing</td></tr>
+                        <tr><td><code>PostCompact</code></td><td>thinking</td></tr>
                         <tr><td><code>Notification</code></td><td>notification</td></tr>
                         <tr><td><code>PermissionRequest</code></td><td>notification</td></tr>
                         <tr><td><code>SessionEnd</code></td><td>done</td></tr>
@@ -614,14 +618,17 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>SessionStart</code></td><td>start</td></tr>
                         <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
                         <tr><td><code>PreToolUse</code></td><td>working</td></tr>
+                        <tr><td><code>PostToolUse</code></td><td>thinking</td></tr>
                         <tr><td><code>SubagentStart</code></td><td>working</td></tr>
+                        <tr><td><code>SubagentStop</code></td><td>thinking</td></tr>
                         <tr><td><code>PermissionRequest</code></td><td>notification</td></tr>
                         <tr><td><code>PreCompact</code></td><td>packing</td></tr>
+                        <tr><td><code>PostCompact</code></td><td>thinking</td></tr>
                         <tr><td><code>Stop</code></td><td>done</td></tr>
                         <tr><td><code>SessionEnd</code></td><td>done</td></tr>
                     </tbody>
                 </table>
-                <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>PreToolUse</code> and <code>PermissionRequest</code> are registered without a matcher, so every tool call can trigger a state change. Informational hooks run in the background; <code>SessionEnd</code> runs synchronously.</p>
+                <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>SessionStart</code> covers startup, resume, and clear. <code>PreToolUse</code>, <code>PostToolUse</code>, and <code>PermissionRequest</code> are registered without a matcher; the tool hooks observe every supported local tool call. Informational hooks run in the background; <code>SessionEnd</code> runs synchronously.</p>
                 <p>After installation, open <code>/hooks</code> and review/trust new or changed VibeMon hook definitions.</p>
 
                 <h3>Kiro IDE</h3>
@@ -631,6 +638,7 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>SessionStart</code></td><td>start</td></tr>
                         <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
                         <tr><td><code>PreToolUse</code></td><td>working</td></tr>
+                        <tr><td><code>PostToolUse</code></td><td>thinking</td></tr>
                         <tr><td><code>Stop</code></td><td>done</td></tr>
                     </tbody>
                 </table>
@@ -640,9 +648,9 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                     <thead><tr><th>Event</th><th>State</th></tr></thead>
                     <tbody>
                         <tr><td><code>gateway_start</code></td><td>start</td></tr>
-                        <tr><td><code>before_agent_start</code></td><td>thinking</td></tr>
+                        <tr><td><code>before_agent_run</code> (fallback: <code>before_agent_start</code>)</td><td>thinking</td></tr>
                         <tr><td><code>before_tool_call</code></td><td>working</td></tr>
-                        <tr><td><code>after_tool_call</code></td><td>thinking</td></tr>
+                        <tr><td><code>subagent_spawned</code></td><td>working</td></tr>
                         <tr><td><code>message_sent</code> / <code>agent_end</code></td><td>done (3s delay)</td></tr>
                         <tr><td><code>session_end</code> / <code>gateway_stop</code></td><td>done</td></tr>
                     </tbody>

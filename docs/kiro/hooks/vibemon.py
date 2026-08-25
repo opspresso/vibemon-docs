@@ -39,6 +39,7 @@ EVENT_STATE_MAP: dict[str, str] = {
     "SessionStart": "start",
     "UserPromptSubmit": "thinking",
     "PreToolUse": "working",
+    "PostToolUse": "thinking",
     "Stop": "done",
 }
 
@@ -50,6 +51,7 @@ EVENT_ALIASES: dict[str, str] = {
     "userPromptSubmit": "UserPromptSubmit",
     "promptSubmit": "UserPromptSubmit",
     "preToolUse": "PreToolUse",
+    "postToolUse": "PostToolUse",
     "stop": "Stop",
     "agentStop": "Stop",
 }

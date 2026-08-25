@@ -71,6 +71,8 @@ The script will:
 2. Merge hooks into existing config files (preserves your settings) — every config it touches is copied to `<name>.bak` first and rewritten atomically
 3. Configure your token (in `~/.vibemon/config.json`, created `0600`)
 
+The installer honors `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `KIRO_HOME`. When an override is set, files and hook commands use that resolved directory instead of `~/.claude`, `~/.codex`, or `~/.kiro`. Kiro is detected through either `kiro` or `kiro-cli`.
+
 **Exit status:** `0` only when every selected platform succeeded. A tool that isn't installed is reported as *skipped* and doesn't fail the run; a platform that genuinely failed exits `1`, even if others succeeded.
 
 **That's it!** After installation, restart your IDE to apply changes.
@@ -186,6 +188,18 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PermissionRequest": [
       {
         "hooks": [
@@ -199,6 +213,18 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
       }
     ],
     "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
       {
         "hooks": [
           {
@@ -234,13 +260,24 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
         ]
       }
     ],
-    "SessionEnd": [
+    "SubagentStop": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/vibemon.py",
             "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
             "timeout": 10
           }
         ]
@@ -280,6 +317,9 @@ Claude Code spawn the interpreter directly, with no shell in between:
   "timeout": 10
 }
 ```
+
+This is the asynchronous form used by informational hooks. Omit `"async": true`
+for `SessionEnd` so Claude Code waits for VibeMon's final status transmission.
 
 `statusLine` has no exec form, so it stays a single command string. Use forward
 slashes (Git Bash eats unquoted backslashes) and quote only what contains a
@@ -332,7 +372,7 @@ Merge the following into your existing `~/.codex/hooks.json`:
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume",
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
             "type": "command",
@@ -357,6 +397,19 @@ Merge the following into your existing `~/.codex/hooks.json`:
         ]
       }
     ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: subagent stop",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [
@@ -364,6 +417,19 @@ Merge the following into your existing `~/.codex/hooks.json`:
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
             "statusMessage": "VibeMon: compacting",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: compacted",
             "async": true,
             "timeout": 10
           }
@@ -390,6 +456,19 @@ Merge the following into your existing `~/.codex/hooks.json`:
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
             "statusMessage": "VibeMon: tool start",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: tool complete",
             "async": true,
             "timeout": 10
           }
@@ -491,7 +570,7 @@ applies to every local project without selecting a custom agent:
 ```
 
 The published `vibemon.json` contains equivalent entries for
-`UserPromptSubmit`, `PreToolUse`, and `Stop`.
+`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`.
 
 **On Windows**, replace `action.command` in every entry with the absolute
 interpreter and script paths because there is no `python3` on `PATH` and `~`
