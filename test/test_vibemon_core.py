@@ -16,7 +16,11 @@ import vibemon_core  # noqa: E402
 EVENT_STATE_MAP = {"SessionStart": "start", "Stop": "done"}
 
 
-def run_hook(event: dict, argv: list[str] | None = None) -> list[dict]:
+def run_hook(
+    event: dict,
+    argv: list[str] | None = None,
+    event_aliases: dict[str, str] | None = None,
+) -> list[dict]:
     """Drive vibemon_core.run() with a stdin event; return sent payloads."""
     sent: list[dict] = []
 
@@ -37,6 +41,7 @@ def run_hook(event: dict, argv: list[str] | None = None) -> list[dict]:
             event_state_map=EVENT_STATE_MAP,
             build_payload=build_payload,
             start_event="SessionStart",
+            event_aliases=event_aliases,
         )
     return sent
 
@@ -149,6 +154,14 @@ class VibemonHomeGuardTest(unittest.TestCase):
         # e.g. a PostToolUse registration left behind by an older install
         sent = run_hook({"hook_event_name": "PostToolUse", "cwd": "/tmp"})
         self.assertEqual(sent, [])
+
+    def test_event_alias_is_normalized_before_state_mapping(self):
+        sent = run_hook(
+            {"hook_event_name": "sessionStart", "cwd": "/tmp"},
+            event_aliases={"sessionStart": "SessionStart"},
+        )
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["state"], "start")
 
 
 if __name__ == "__main__":

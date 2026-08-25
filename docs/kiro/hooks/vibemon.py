@@ -36,15 +36,22 @@ CHARACTER = "kiro"
 
 # Event to state mapping (immutable)
 EVENT_STATE_MAP: dict[str, str] = {
-    "agentSpawn": "start",
-    "promptSubmit": "thinking",
-    "userPromptSubmit": "thinking",
-    "fileCreated": "working",
-    "fileDeleted": "working",
-    "fileEdited": "working",
-    "preToolUse": "working",
-    "agentStop": "done",
-    "stop": "done",
+    "SessionStart": "start",
+    "UserPromptSubmit": "thinking",
+    "PreToolUse": "working",
+    "Stop": "done",
+}
+
+# Kiro's v1 config uses PascalCase trigger names while hook payloads currently
+# use lower camel case. Legacy names remain aliases for in-flight upgrades.
+EVENT_ALIASES: dict[str, str] = {
+    "sessionStart": "SessionStart",
+    "agentSpawn": "SessionStart",
+    "userPromptSubmit": "UserPromptSubmit",
+    "promptSubmit": "UserPromptSubmit",
+    "preToolUse": "PreToolUse",
+    "stop": "Stop",
+    "agentStop": "Stop",
 }
 
 
@@ -65,14 +72,11 @@ def build_payload(
 
 
 if __name__ == "__main__":
-    # agentSpawn is the session-start event (maps to the "start" state) —
-    # auto-launch is anchored to it, matching the Claude/Codex bridges'
-    # SessionStart behavior. Kiro hook registrations pass the event name as
-    # the first argument (argv_event_fallback).
     core.run(
         event_state_map=EVENT_STATE_MAP,
         build_payload=build_payload,
-        start_event="agentSpawn",
+        start_event="SessionStart",
         argv_event_fallback=True,
+        event_aliases=EVENT_ALIASES,
     )
     sys.exit(0)

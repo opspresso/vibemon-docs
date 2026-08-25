@@ -119,8 +119,10 @@ CONFIG_EXAMPLE_FILE = "vibemon/config.example.json"
 # Claude Code statusline display configuration example file
 STATUSLINE_EXAMPLE_FILE = "vibemon/statusline.example.json"
 
-# Kiro's standalone .kiro.hook definitions; installed and removed as a set.
-KIRO_HOOK_FILES = (
+# Kiro IDE 0.x / CLI 2.x hook definitions removed during migration. Current
+# Kiro uses a single v1 config at ~/.kiro/hooks/vibemon.json.
+KIRO_HOOK_CONFIG_FILE = "kiro/hooks/vibemon.json"
+LEGACY_KIRO_HOOK_FILES = (
     "vibemon-prompt-submit.kiro.hook",
     "vibemon-agent-stop.kiro.hook",
     "vibemon-file-created.kiro.hook",
@@ -657,33 +659,16 @@ def strip_all_vibemon_hooks(existing: dict) -> list:
     return _prune_vibemon_hooks(existing, lambda event: set())
 
 
-def merge_kiro_hooks(existing: dict, new_hooks: dict) -> dict:
-    """Merge new hooks into existing hooks configuration (Kiro format)."""
-    result = {}
+def replace_vibemon_hooks(existing: dict, new_hooks: dict) -> tuple[dict, list]:
+    """Replace VibeMon-owned registrations while preserving every user hook.
 
-    def get_kiro_hook_id(hook: dict) -> str:
-        """Create unique identifier for a Kiro hook."""
-        cmd = hook.get("command", "")
-        args = " ".join(hook.get("args", []))
-        return f"{cmd} {args}"
-
-    for event, new_entries in new_hooks.items():
-        if event not in existing:
-            result[event] = new_entries
-        else:
-            existing_entries = existing[event]
-            existing_ids = {get_kiro_hook_id(h) for h in existing_entries}
-            result[event] = existing_entries.copy()
-
-            for new_entry in new_entries:
-                if get_kiro_hook_id(new_entry) not in existing_ids:
-                    result[event].append(new_entry)
-
-    for event in existing:
-        if event not in result:
-            result[event] = existing[event]
-
-    return result
+    Command identity alone is insufficient for upgrades: fields such as
+    `async`, `timeout`, and `statusMessage` can change while the command stays
+    the same. Removing only VibeMon entries before merging ensures those
+    fields are refreshed without touching neighboring user configuration.
+    """
+    replaced = strip_all_vibemon_hooks(existing)
+    return merge_hooks(existing, new_hooks), replaced
 
 
 # ============================================================================
@@ -800,8 +785,8 @@ def adapt_codex_hooks(hooks_config: dict) -> dict:
     """Add Codex's Windows-only `commandWindows` override to each packaged hook.
 
     Codex's hooks.json takes a separate command string for Windows beside the
-    POSIX one, so the packaged `command` stays intact and the override is used
-    as soon as Codex enables hooks there. Mutates and returns `hooks_config`.
+    POSIX one, so the packaged `command` stays intact and Windows selects the
+    override. Mutates and returns `hooks_config`.
     """
     if not IS_WINDOWS:
         return hooks_config
@@ -820,37 +805,12 @@ def adapt_codex_hooks(hooks_config: dict) -> dict:
     return hooks_config
 
 
-def adapt_kiro_agent(agent: dict) -> dict:
-    """Point the packaged Kiro agent's hooks at a real interpreter on Windows.
-
-    agents/default.json already uses the exec-form shape (`command` plus
-    `args`, where args[0] is the script and args[1] the event name), so only
-    the interpreter and the script path need substituting. Mutates and returns
-    `agent`.
-    """
-    if not IS_WINDOWS:
-        return agent
-
-    python = hook_python()
-    script = hook_path(Path.home() / ".kiro" / "hooks" / "vibemon.py")
-
-    for entries in agent.get("hooks", {}).values():
-        for hook in entries:
-            args = hook.get("args") or []
-            if args and "vibemon.py" in args[0]:
-                hook["command"] = python
-                hook["args"] = [script, *args[1:]]
-
-    return agent
-
-
-def adapt_kiro_hook_file(content: str) -> str:
-    """Rewrite a standalone .kiro.hook definition's command for Windows.
+def adapt_kiro_hook_config(content: str) -> str:
+    """Rewrite Kiro's v1 global hook commands for Windows.
 
     Returns `content` untouched on POSIX so the file stays byte-identical to
-    its manifest hash there. On Windows `then.command` is a shell string with
-    no exec form available, so it gets absolute paths — which is why the
-    Desktop app excludes these files from drift detection on Windows.
+    its manifest hash there. Kiro's `action.command` is a shell string, so on
+    Windows it needs the interpreter and script's absolute paths.
 
     The quoting is deliberately conservative: unquoted forward-slash paths run
     under cmd.exe, Git Bash and PowerShell alike, and quotes are added only
@@ -859,19 +819,22 @@ def adapt_kiro_hook_file(content: str) -> str:
     if not IS_WINDOWS:
         return content
 
-    hook = json.loads(content)
-    command = hook.get("then", {}).get("command", "")
-    if "vibemon.py" not in command:
-        return content
-
-    # "python3 ~/.kiro/hooks/vibemon.py fileCreated" -> keep the event name
-    event_args = command.split()[2:]
-    hook["then"]["command"] = " ".join([
-        _shell_quote(hook_python()),
-        _shell_quote(hook_path(Path.home() / ".kiro" / "hooks" / "vibemon.py")),
-        *event_args,
-    ])
-    return json.dumps(hook, indent=2) + "\n"
+    config = json.loads(content)
+    changed = False
+    for hook in config.get("hooks", []):
+        action = hook.get("action", {})
+        command = action.get("command", "")
+        if "vibemon.py" not in command:
+            continue
+        # "python3 ~/.kiro/hooks/vibemon.py SessionStart" -> keep event args.
+        event_args = command.split()[2:]
+        action["command"] = " ".join([
+            _shell_quote(hook_python()),
+            _shell_quote(hook_path(Path.home() / ".kiro" / "hooks" / "vibemon.py")),
+            *event_args,
+        ])
+        changed = True
+    return json.dumps(config, indent=2) + "\n" if changed else content
 
 
 class FileSource:
@@ -1093,34 +1056,6 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
     return True
 
 
-def ensure_feature_flag_enabled(config_text: str, key: str) -> str:
-    """Ensure a boolean key is set to true within the [features] section of config.toml."""
-    if re.search(rf"^{re.escape(key)}\s*=\s*true\s*$", config_text, re.MULTILINE):
-        return config_text
-
-    features_match = re.search(r"(?ms)^\[features\]\n(.*?)(?=^\[|\Z)", config_text)
-    if features_match:
-        section = features_match.group(0)
-        if re.search(rf"^{re.escape(key)}\s*=", section, re.MULTILINE):
-            section = re.sub(
-                rf"^{re.escape(key)}\s*=\s*false\s*$",
-                f"{key} = true",
-                section,
-                flags=re.MULTILINE,
-            )
-        else:
-            section = section.rstrip() + f"\n{key} = true\n"
-        return config_text[:features_match.start()] + section + config_text[features_match.end():]
-
-    suffix = "" if config_text.endswith("\n") else "\n"
-    return config_text + suffix + f"\n[features]\n{key} = true\n"
-
-
-def ensure_codex_hooks_enabled(config_text: str) -> str:
-    """Ensure the Codex hooks feature flag is enabled in config.toml."""
-    return ensure_feature_flag_enabled(config_text, "hooks")
-
-
 CODEX_STATUS_LINE_ITEMS = [
     "model-with-reasoning",
     "current-dir",
@@ -1171,6 +1106,15 @@ def ensure_codex_status_line(config_text: str) -> str:
     return config_text + suffix + "\n" + status_line.rstrip() + "\n"
 
 
+def prepare_codex_config(config_text: str) -> str:
+    """Add VibeMon's status items without overriding the hook preference.
+
+    Codex hooks are enabled by default. An explicit `[features].hooks = false`
+    is therefore a user choice and must survive installation unchanged.
+    """
+    return ensure_codex_status_line(config_text)
+
+
 def install_codex(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon for Codex CLI."""
     codex_home = Path.home() / ".codex"
@@ -1202,10 +1146,9 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
 
         existing_map = existing_hooks.get("hooks", {})
         new_map = new_hooks.get("hooks", {})
-        stale = remove_stale_vibemon_hooks(existing_map, new_map)
-        if stale:
-            print(f"  {colored('✓', 'green')} removed unused VibeMon hooks: {', '.join(stale)}")
-        existing_hooks["hooks"] = merge_hooks(existing_map, new_map)
+        existing_hooks["hooks"], replaced = replace_vibemon_hooks(existing_map, new_map)
+        if replaced:
+            print(f"  {colored('✓', 'green')} refreshed VibeMon hooks: {', '.join(replaced)}")
         write_text_atomic(hooks_file, json.dumps(existing_hooks, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} hooks merged into ~/.codex/hooks.json")
     else:
@@ -1216,10 +1159,9 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
     config_toml_file = codex_home / "config.toml"
     if config_toml_file.exists():
         existing_toml = config_toml_file.read_text(encoding="utf-8")
-        updated_toml = ensure_codex_hooks_enabled(existing_toml)
-        updated_toml = ensure_codex_status_line(updated_toml)
+        updated_toml = prepare_codex_config(existing_toml)
         write_text_atomic(config_toml_file, updated_toml)
-        print(f"  {colored('✓', 'green')} hooks and status line configured in ~/.codex/config.toml")
+        print(f"  {colored('✓', 'green')} status line configured in ~/.codex/config.toml")
     else:
         write_text_atomic(config_toml_file, source.get_file("codex/config.toml"))
         print(f"  {colored('✓', 'green')} ~/.codex/config.toml created")
@@ -1233,11 +1175,19 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
 
     print(f"\n{colored('Codex CLI installation complete!', 'green')}")
     print(f"\n{colored('Notes:', 'yellow')}")
-    print("  • Codex hooks are experimental. Codex CLI still disables them on")
-    print("    Windows, so the installed `commandWindows` override only starts")
-    print("    firing once Codex enables Windows hook support")
+    print("  • Open /hooks and review/trust the new or changed VibeMon hooks")
+    print("  • An explicit [features].hooks = false was left unchanged")
     print("  • Restart your Codex session after installation")
     return True
+
+
+def remove_legacy_kiro_hooks(kiro_home: Path) -> None:
+    """Remove only VibeMon's IDE 0.x / CLI 2.x hook registrations."""
+    _uninstall_hooks_from_json(
+        kiro_home / "agents" / "default.json", [], "~/.kiro/agents/default.json"
+    )
+    for hook_file in LEGACY_KIRO_HOOK_FILES:
+        remove_path(kiro_home / "hooks" / hook_file, f"~/.kiro/hooks/{hook_file}")
 
 
 def install_kiro(source: FileSource, cli_token: str = None) -> bool:
@@ -1251,7 +1201,6 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
 
     kiro_home.mkdir(parents=True, exist_ok=True)
     (kiro_home / "hooks").mkdir(parents=True, exist_ok=True)
-    (kiro_home / "agents").mkdir(parents=True, exist_ok=True)
 
     print("Copying files:")
 
@@ -1259,39 +1208,20 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
     content = source.get_file("kiro/hooks/vibemon.py")
     ok = write_file_with_diff(kiro_home / "hooks" / "vibemon.py", content, "~/.kiro/hooks/vibemon.py", executable=True)
 
-    # Handle agents/default.json (merge, don't overwrite)
-    print("\nConfiguring agents/default.json:")
-    agent_file = kiro_home / "agents" / "default.json"
-    new_agent = adapt_kiro_agent(json.loads(source.get_file("kiro/agents/default.json")))
+    print("\nConfiguring global hooks:")
+    hook_config = adapt_kiro_hook_config(source.get_file(KIRO_HOOK_CONFIG_FILE))
     if IS_WINDOWS:
         print(f"  {colored('✓', 'green')} hooks pinned to {hook_python()}")
+    ok &= write_file_with_diff(
+        kiro_home / "hooks" / "vibemon.json",
+        hook_config,
+        "~/.kiro/hooks/vibemon.json",
+    )
 
-    if agent_file.exists():
-        existing_agent = load_json_or_backup(agent_file)
-
-        if "hooks" in existing_agent:
-            stale = remove_stale_vibemon_hooks(
-                existing_agent["hooks"], new_agent["hooks"]
-            )
-            if stale:
-                print(f"  {colored('✓', 'green')} removed unused VibeMon hooks: {', '.join(stale)}")
-            existing_agent["hooks"] = merge_kiro_hooks(
-                existing_agent["hooks"], new_agent["hooks"]
-            )
-            print(f"  {colored('✓', 'green')} hooks merged into agents/default.json")
-        else:
-            existing_agent["hooks"] = new_agent["hooks"]
-            print(f"  {colored('✓', 'green')} hooks added to agents/default.json")
-
-        write_text_atomic(agent_file, json.dumps(existing_agent, indent=2) + "\n")
-    else:
-        write_text_atomic(agent_file, json.dumps(new_agent, indent=2) + "\n")
-        print(f"  {colored('✓', 'green')} agents/default.json created")
-
-    # .kiro.hook files
-    for hook_file in KIRO_HOOK_FILES:
-        content = adapt_kiro_hook_file(source.get_file(f"kiro/hooks/{hook_file}"))
-        ok &= write_file_with_diff(kiro_home / "hooks" / hook_file, content, f"~/.kiro/hooks/{hook_file}")
+    # Only retire working legacy registrations after the current v1 config is
+    # safely in place. User hooks in the old agent file are preserved.
+    if ok:
+        remove_legacy_kiro_hooks(kiro_home)
 
     configure_vibemon_config(source, cli_token)
     ok &= install_vibemon_shared(source)
@@ -1301,11 +1231,7 @@ def install_kiro(source: FileSource, cli_token: str = None) -> bool:
         return False
 
     print(f"\n{colored('Kiro IDE installation complete!', 'green')}")
-    print(f"\n{colored('Next steps (Kiro CLI):', 'yellow')}")
-    print("  Kiro CLI hooks only run on the \"default\" custom agent VibeMon just")
-    print("  created (the built-in kiro_default agent can't be hooked directly).")
-    print("  Activate it with: kiro-cli --agent default")
-    print("  or inside a session: /agent swap default")
+    print("  • Global hooks apply to every local Kiro IDE and CLI project")
     return True
 
 
@@ -1625,12 +1551,9 @@ def uninstall_kiro(source: FileSource = None, cli_token: str = None) -> bool:
         return SKIPPED
 
     print(f"\n{colored('Removing VibeMon from Kiro IDE...', 'cyan')}\n")
-    _uninstall_hooks_from_json(
-        kiro_home / "agents" / "default.json", [], "~/.kiro/agents/default.json"
-    )
+    remove_legacy_kiro_hooks(kiro_home)
+    remove_path(kiro_home / "hooks" / "vibemon.json", "~/.kiro/hooks/vibemon.json")
     remove_path(kiro_home / "hooks" / "vibemon.py", "~/.kiro/hooks/vibemon.py")
-    for hook_file in KIRO_HOOK_FILES:
-        remove_path(kiro_home / "hooks" / hook_file, f"~/.kiro/hooks/{hook_file}")
     print(f"\n{colored('Kiro IDE cleanup complete!', 'green')}")
     return True
 

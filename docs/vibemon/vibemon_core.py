@@ -1124,6 +1124,7 @@ def run(
     build_payload: Callable[[str, str, str, dict[str, Any]], dict[str, Any]],
     start_event: str,
     argv_event_fallback: bool = False,
+    event_aliases: dict[str, str] | None = None,
 ) -> None:
     """Hook entry point, driven by a per-tool adapter.
 
@@ -1135,6 +1136,7 @@ def run(
     - argv_event_fallback: treat a non-command first argv as the event name
       when stdin carries no hook_event_name (Kiro hook registrations pass the
       event name as the first argument, e.g. `vibemon.py promptSubmit`)
+    - event_aliases: normalize a tool's payload event names before mapping
     """
     if os.environ.get("VIBEMON_SUPPRESS_HOOKS") == "1":
         # Set by VibeMon's own usage-refresher when it spawns
@@ -1160,6 +1162,8 @@ def run(
 
     # Extract fields from parsed data
     event_name = data.get("hook_event_name", "") or argv_event or "Unknown"
+    if event_aliases:
+        event_name = event_aliases.get(event_name, event_name)
     tool_name = data.get("tool_name", "")
     cwd = data.get("cwd", "")
     transcript_path = data.get("transcript_path", "")

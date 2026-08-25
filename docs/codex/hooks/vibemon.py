@@ -44,6 +44,7 @@ EVENT_STATE_MAP: dict[str, str] = {
     "SubagentStart": "working",
     "PreCompact": "packing",
     "Stop": "done",
+    "SessionEnd": "done",
 }
 
 

@@ -23,7 +23,6 @@ UNMANIFESTED = {
     "claude/settings.json",
     "codex/hooks.json",
     "codex/config.toml",
-    "kiro/agents/default.json",
     install.CONFIG_EXAMPLE_FILE,
     install.STATUSLINE_EXAMPLE_FILE,
 }
@@ -36,8 +35,6 @@ def downloaded_paths() -> set:
     # Some fetches pass a module constant instead of a literal.
     for name in set(re.findall(r"get_file\(([A-Z][A-Z0-9_]*)\)", source)):
         paths.add(getattr(install, name))
-    # The Kiro hook files are fetched through an f-string over KIRO_HOOK_FILES.
-    paths.update(f"kiro/hooks/{name}" for name in install.KIRO_HOOK_FILES)
     return paths
 
 

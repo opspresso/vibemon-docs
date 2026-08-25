@@ -7,9 +7,9 @@ periodically and compares the hashes against the installed local files to
 detect out-of-date scripts, and verifies the downloaded install.py against
 the installer hash before running it.
 
-Merged config files (claude/settings.json, codex/hooks.json, codex/config.toml,
-kiro/agents/default.json) are excluded: their installed form is merged with
-user content and can never match the source hash.
+Merged config files (claude/settings.json, codex/hooks.json, codex/config.toml)
+are excluded: their installed form is merged with user content and can never
+match the source hash.
 
 Usage:
   python3 scripts/generate_manifest.py
@@ -31,11 +31,7 @@ MANIFEST_FILES = [
     "claude/hooks/vibemon.py",
     "codex/hooks/vibemon.py",
     "kiro/hooks/vibemon.py",
-    "kiro/hooks/vibemon-prompt-submit.kiro.hook",
-    "kiro/hooks/vibemon-agent-stop.kiro.hook",
-    "kiro/hooks/vibemon-file-created.kiro.hook",
-    "kiro/hooks/vibemon-file-edited.kiro.hook",
-    "kiro/hooks/vibemon-file-deleted.kiro.hook",
+    "kiro/hooks/vibemon.json",
     "openclaw/extensions/index.mjs",
     "openclaw/extensions/openclaw.plugin.json",
 ]

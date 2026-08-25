@@ -69,12 +69,12 @@ Requires Python 3 from [python.org](https://www.python.org/downloads/windows/) (
 |---------|---------|
 | Claude Code hooks & status line | Supported |
 | Kiro IDE hooks | Supported |
-| Codex CLI hooks | Installed but dormant — Codex CLI still disables hooks on Windows. The installer writes a `commandWindows` override that starts firing once Codex enables them |
+| Codex CLI hooks | Supported |
 | OpenClaw | Not supported yet — the installer skips it |
 | Desktop App & VibeMon cloud targets | Supported |
 | ESP32 USB serial | Not supported — a configured `serial_port` is ignored (HTTP/WiFi still works) |
 
-Windows hooks are written with the *absolute* path of the Python that ran the installer, because PowerShell doesn't expand `~` in argument position — Claude Code and Kiro use exec form (`command` + `args`), and Kiro's standalone `.kiro.hook` files get an absolute command string. Re-run the installer after upgrading or moving your Python installation. `~/.vibemon/config.json` is still created mode `0600`, but on Windows that only affects the read-only flag — it is not an access restriction.
+Windows hooks are written with the *absolute* path of the Python that ran the installer, because PowerShell doesn't expand `~` in argument position. Claude Code uses exec form (`command` + `args`); Codex's `commandWindows` and Kiro's v1 `action.command` receive absolute command strings. Re-run the installer after upgrading or moving your Python installation. `~/.vibemon/config.json` is still created mode `0600`, but on Windows that only affects the read-only flag — it is not an access restriction.
 
 ### Local Install
 
@@ -120,14 +120,9 @@ Note that the plan-usage fields (`usage5h`/`usageWeek` and their reset countdown
 
 ### Codex Configuration
 
-Codex uses the same `~/.vibemon/config.json` as Claude Code, Kiro, and the OpenClaw plugin. Enable Codex hooks in `~/.codex/config.toml`:
+Codex uses the same `~/.vibemon/config.json` as Claude Code, Kiro, and the OpenClaw plugin. Hooks are enabled by default; the installer preserves an explicit `[features].hooks = false` in `~/.codex/config.toml`. Merge [`codex/hooks.json`](./docs/codex/hooks.json) into your existing `~/.codex/hooks.json` (do not overwrite), then open `/hooks` in Codex and review/trust the new definitions. Codex skips new or changed non-managed hooks until their current definition is trusted.
 
-```toml
-[features]
-hooks = true
-```
-
-Then merge [`codex/hooks.json`](./docs/codex/hooks.json) into your existing `~/.codex/hooks.json` (do not overwrite). Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported — on Windows the installer still writes a `commandWindows` override beside each `command`, so the hooks start working as soon as Codex enables them there.
+Kiro IDE 1.x and CLI 3.x load VibeMon from the global v1 hook file at `~/.kiro/hooks/vibemon.json`, so no custom agent needs to be selected. During upgrades, the installer removes only VibeMon's legacy hooks from `~/.kiro/agents/default.json` and its old `.kiro.hook` files; neighboring user hooks are preserved.
 
 ### OpenClaw Configuration
 
@@ -347,20 +342,18 @@ Token format: `a-z`, `0-9`, `_`, `-`, 8-64 characters (e.g. `my_token_123`).
 | PermissionRequest | notification |
 | PreCompact | packing |
 | Stop | done |
+| SessionEnd | done |
 
-`PreToolUse` and `PermissionRequest` are registered without a matcher, so every tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools) triggers a state change. Codex has no `SessionEnd` event; `Stop` (end of turn) is the terminal signal.
-
-Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported. See [Windows (PowerShell)](#windows-powershell) for what the installer writes there in the meantime.
+`PreToolUse` and `PermissionRequest` are registered without a matcher, so every tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools) triggers a state change. `Stop` marks the end of each turn; `SessionEnd` marks the end of the main thread. Informational hooks run in the background, while `SessionEnd` runs synchronously with Codex's three-second maximum timeout.
 
 ### Kiro IDE
 
 | Event | State |
 |-------|-------|
-| agentSpawn | start |
-| promptSubmit / userPromptSubmit | thinking |
-| fileCreated / fileEdited / fileDeleted | working |
-| preToolUse | working |
-| agentStop / stop | done |
+| SessionStart | start |
+| UserPromptSubmit | thinking |
+| PreToolUse | working |
+| Stop | done |
 
 ### OpenClaw
 

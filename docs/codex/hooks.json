@@ -7,7 +7,9 @@
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: session start"
+            "statusMessage": "VibeMon: session start",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -18,7 +20,9 @@
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: subagent start"
+            "statusMessage": "VibeMon: subagent start",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -29,7 +33,9 @@
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: compacting"
+            "statusMessage": "VibeMon: compacting",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -40,7 +46,9 @@
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: prompt submit"
+            "statusMessage": "VibeMon: prompt submit",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -51,7 +59,9 @@
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: tool start"
+            "statusMessage": "VibeMon: tool start",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -62,7 +72,9 @@
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: approval needed"
+            "statusMessage": "VibeMon: approval needed",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -73,7 +85,21 @@
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: turn done"
+            "statusMessage": "VibeMon: turn done",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: session end",
+            "timeout": 3
           }
         ]
       }

@@ -319,11 +319,9 @@ curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
 chmod +x ~/.codex/hooks/vibemon.py ~/.vibemon/usage.py
 ```
 
-Enable Codex hooks in `~/.codex/config.toml`:
-```toml
-[features]
-hooks = true
-```
+Codex hooks are enabled by default. If `~/.codex/config.toml` explicitly sets
+`[features].hooks = false`, leave that user preference unchanged and explain
+that VibeMon hooks will remain disabled.
 
 **IMPORTANT: Do NOT overwrite `~/.codex/hooks.json`!**
 
@@ -339,7 +337,9 @@ Merge the following into your existing `~/.codex/hooks.json`:
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: session start"
+            "statusMessage": "VibeMon: session start",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -350,7 +350,9 @@ Merge the following into your existing `~/.codex/hooks.json`:
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: subagent start"
+            "statusMessage": "VibeMon: subagent start",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -361,7 +363,9 @@ Merge the following into your existing `~/.codex/hooks.json`:
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: compacting"
+            "statusMessage": "VibeMon: compacting",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -372,7 +376,9 @@ Merge the following into your existing `~/.codex/hooks.json`:
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: prompt submit"
+            "statusMessage": "VibeMon: prompt submit",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -383,7 +389,9 @@ Merge the following into your existing `~/.codex/hooks.json`:
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: tool start"
+            "statusMessage": "VibeMon: tool start",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -394,7 +402,9 @@ Merge the following into your existing `~/.codex/hooks.json`:
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: approval needed"
+            "statusMessage": "VibeMon: approval needed",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -405,7 +415,21 @@ Merge the following into your existing `~/.codex/hooks.json`:
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/vibemon.py",
-            "statusMessage": "VibeMon: turn done"
+            "statusMessage": "VibeMon: turn done",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: session end",
+            "timeout": 3
           }
         ]
       }
@@ -427,82 +451,65 @@ hooks.json takes a Windows-only command string, so the POSIX one stays intact:
 ```
 
 **Notes:**
-- Codex hooks are experimental
-- Official docs currently state Windows support is disabled for hooks, so the
-  `commandWindows` override stays dormant until Codex enables them
+- Open `/hooks` and review/trust the new or changed VibeMon hooks. Codex skips
+  non-managed hooks until their current definition is trusted
+- `commandWindows` is the officially supported Windows command override
 - Restart your Codex session after updating config files
 
 ### For Kiro IDE (Manual)
 
 Download hook files:
 ```bash
-mkdir -p ~/.kiro/hooks ~/.kiro/agents ~/.vibemon
+mkdir -p ~/.kiro/hooks ~/.vibemon
 curl -o ~/.kiro/hooks/vibemon.py https://docs.vibemon.io/kiro/hooks/vibemon.py
+curl -o ~/.kiro/hooks/vibemon.json https://docs.vibemon.io/kiro/hooks/vibemon.json
 curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
 curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
 curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
-curl -o ~/.kiro/hooks/vibemon-prompt-submit.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-prompt-submit.kiro.hook
-curl -o ~/.kiro/hooks/vibemon-agent-stop.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-agent-stop.kiro.hook
-curl -o ~/.kiro/hooks/vibemon-file-created.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-file-created.kiro.hook
-curl -o ~/.kiro/hooks/vibemon-file-edited.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-file-edited.kiro.hook
-curl -o ~/.kiro/hooks/vibemon-file-deleted.kiro.hook https://docs.vibemon.io/kiro/hooks/vibemon-file-deleted.kiro.hook
 chmod +x ~/.kiro/hooks/vibemon.py ~/.vibemon/usage.py
 ```
 
-**IMPORTANT: Do NOT overwrite `~/.kiro/agents/default.json`!**
-
-Merge the following hooks into your existing `~/.kiro/agents/default.json`:
+Kiro IDE 1.x and CLI 3.x discover the global v1 config automatically. It
+applies to every local project without selecting a custom agent:
 
 ```json
 {
-  "hooks": {
-    "agentSpawn": [
-      { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "agentSpawn"] }
-    ],
-    "userPromptSubmit": [
-      { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "promptSubmit"] }
-    ],
-    "preToolUse": [
-      { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "preToolUse"] }
-    ],
-    "stop": [
-      { "command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "agentStop"] }
-    ]
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "VibeMon - Session Start",
+      "trigger": "SessionStart",
+      "action": {
+        "type": "command",
+        "command": "python3 ~/.kiro/hooks/vibemon.py SessionStart"
+      },
+      "timeout": 10,
+      "enabled": true
+    }
+  ]
+}
+```
+
+The published `vibemon.json` contains equivalent entries for
+`UserPromptSubmit`, `PreToolUse`, and `Stop`.
+
+**On Windows**, replace `action.command` in every entry with the absolute
+interpreter and script paths because there is no `python3` on `PATH` and `~`
+is not expanded in argument position:
+
+```json
+{
+  "action": {
+    "type": "command",
+    "command": "C:/Users/you/AppData/Local/Programs/Python/Python313/python.exe C:/Users/you/.kiro/hooks/vibemon.py SessionStart"
   }
 }
 ```
 
-**On Windows**, substitute the interpreter and the script path — there is no
-`python3` on `PATH` and `~` is not expanded in argument position:
-
-```json
-{
-  "command": "C:/Users/you/AppData/Local/Programs/Python/Python313/python.exe",
-  "args": ["C:/Users/you/.kiro/hooks/vibemon.py", "agentSpawn"]
-}
-```
-
-The standalone `.kiro.hook` files carry a shell command string rather than an
-argument list, so their `then.command` needs the same substitution:
-
-```json
-{
-  "then": {
-    "type": "runCommand",
-    "command": "C:/Users/you/AppData/Local/Programs/Python/Python313/python.exe C:/Users/you/.kiro/hooks/vibemon.py fileCreated"
-  }
-}
-```
-
-Because those files then differ from the published copies, the Desktop app
-stops tracking them for updates on Windows — re-run the installer after a
-VibeMon release to pick up changes to them.
-
-Activate the default agent so the merged hooks take effect:
-```bash
-kiro-cli --agent default
-# or inside a running session: /agent swap default
-```
+When upgrading from Kiro IDE 0.x or CLI 2.x, remove only VibeMon entries from
+`~/.kiro/agents/default.json` and delete the five VibeMon `.kiro.hook` files.
+Do not remove neighboring user hooks. The installer performs this migration
+after `vibemon.json` is written successfully.
 
 ### For OpenClaw (Manual)
 
@@ -616,13 +623,13 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 ### Codex CLI
 | Issue | Solution |
 |-------|----------|
-| Hook not triggering | Check `~/.codex/hooks.json` and ensure `hooks = true` in `~/.codex/config.toml` |
+| Hook not triggering | Check `~/.codex/hooks.json`, open `/hooks`, and review/trust the current VibeMon definitions; also check that config does not explicitly set `hooks = false` |
 | No updates after install | Restart the Codex session after editing hook files |
 
 ### Kiro IDE
 | Issue | Solution |
 |-------|----------|
-| Hook not triggering | Check `~/.kiro/agents/default.json` hooks |
+| Hook not triggering | Check the v1 schema in `~/.kiro/hooks/vibemon.json`; on CLI 3.x run `kiro-cli diagnostic` |
 | Permission denied | Run `chmod +x ~/.kiro/hooks/vibemon.py` |
 
 ### OpenClaw
@@ -640,7 +647,7 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 | Backslashes disappear from a path | Git Bash treats them as escapes. Write hook and status line paths with forward slashes |
 | ESP32 not updating | USB serial is POSIX-only; `serial_port` is ignored on Windows. Use the Desktop app or the ESP32's WiFi/HTTP target instead |
 | OpenClaw reported as skipped | Expected — OpenClaw is not supported on Windows yet |
-| Kiro `.kiro.hook` files never flagged as out of date | Expected — they hold an absolute interpreter path on Windows, so the Desktop app can't compare them to the published copies. Re-run the installer after a release |
+| Kiro hook stopped after upgrading from IDE 0.x / CLI 2.x | Re-run the installer to migrate embedded hooks and `.kiro.hook` files to `~/.kiro/hooks/vibemon.json` |
 
 ## More Information
 

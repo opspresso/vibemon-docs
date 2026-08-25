@@ -1,6 +1,3 @@
-[features]
-hooks = true
-
 [tui]
 status_line = [
   "model-with-reasoning",

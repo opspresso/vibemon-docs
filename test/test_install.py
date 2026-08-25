@@ -105,6 +105,11 @@ class EnsureCodexStatusLineTest(unittest.TestCase):
         once = ensure_codex_status_line("[features]\nhooks = true\n")
         self.assertEqual(ensure_codex_status_line(once), once)
 
+    def test_prepare_preserves_explicit_hooks_false(self):
+        result = install.prepare_codex_config("[features]\nhooks = false\n")
+        self.assertIn("[features]\nhooks = false\n", result)
+        self.assertNotIn("hooks = true", result)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -121,6 +126,33 @@ class StripAllVibemonHooksTest(unittest.TestCase):
         existing = {"Stop": [USER_ENTRY]}
         self.assertEqual(install.strip_all_vibemon_hooks(existing), [])
         self.assertEqual(existing, {"Stop": [USER_ENTRY]})
+
+
+class ReplaceVibemonHooksTest(unittest.TestCase):
+    def test_refreshes_fields_without_touching_user_hooks(self):
+        old = {
+            "hooks": [{
+                "type": "command",
+                "command": "python3 ~/.codex/hooks/vibemon.py",
+                "statusMessage": "old",
+            }]
+        }
+        new = {
+            "hooks": [{
+                "type": "command",
+                "command": "python3 ~/.codex/hooks/vibemon.py",
+                "statusMessage": "new",
+                "async": True,
+            }]
+        }
+        existing = {"Stop": [old, USER_ENTRY]}
+
+        merged, replaced = install.replace_vibemon_hooks(existing, {"Stop": [new]})
+
+        self.assertEqual(replaced, ["Stop"])
+        self.assertIn(USER_ENTRY, merged["Stop"])
+        self.assertIn(new, merged["Stop"])
+        self.assertNotIn(old, merged["Stop"])
 
 
 class RenamedVibemonCommandTest(unittest.TestCase):
@@ -446,54 +478,116 @@ class AdaptCodexHooksTest(unittest.TestCase):
         )
 
 
-KIRO_AGENT = json.loads((DOCS_DIR / "kiro" / "agents" / "default.json").read_text(encoding="utf-8"))
-KIRO_HOOK_FILE = (DOCS_DIR / "kiro" / "hooks" / "vibemon-file-created.kiro.hook").read_text(
+KIRO_HOOK_CONFIG = (DOCS_DIR / "kiro" / "hooks" / "vibemon.json").read_text(
     encoding="utf-8"
 )
 
 
 class AdaptKiroTest(unittest.TestCase):
-    def test_posix_agent_is_unchanged(self):
-        agent = json.loads(json.dumps(KIRO_AGENT))
+    def test_posix_hook_config_is_returned_verbatim(self):
+        """The file is hashed in manifest.json, so POSIX must not touch it."""
         with PosixFake():
-            self.assertEqual(install.adapt_kiro_agent(agent), KIRO_AGENT)
+            self.assertEqual(
+                install.adapt_kiro_hook_config(KIRO_HOOK_CONFIG), KIRO_HOOK_CONFIG
+            )
 
-    def test_posix_hook_file_is_returned_verbatim(self):
-        """These files are hashed in manifest.json, so POSIX must not touch them."""
-        with PosixFake():
-            self.assertEqual(install.adapt_kiro_hook_file(KIRO_HOOK_FILE), KIRO_HOOK_FILE)
-
-    def test_windows_agent_keeps_the_event_name_argument(self):
-        with WindowsFake():
-            agent = install.adapt_kiro_agent(json.loads(json.dumps(KIRO_AGENT)))
-        hook = agent["hooks"]["agentSpawn"][0]
-        self.assertEqual(hook["command"], WindowsFake.PYTHON)
+    def test_v1_config_has_current_global_triggers(self):
+        config = json.loads(KIRO_HOOK_CONFIG)
+        self.assertEqual(config["version"], "v1")
         self.assertEqual(
-            hook["args"],
-            [f"{WindowsFake.HOME}/.kiro/hooks/vibemon.py", "agentSpawn"],
+            [hook["trigger"] for hook in config["hooks"]],
+            ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
         )
 
-    def test_windows_hook_file_command_keeps_the_event_name(self):
+    def test_windows_commands_keep_event_arguments(self):
         with WindowsFake():
-            adapted = json.loads(install.adapt_kiro_hook_file(KIRO_HOOK_FILE))
+            config = json.loads(install.adapt_kiro_hook_config(KIRO_HOOK_CONFIG))
+        command = config["hooks"][0]["action"]["command"]
         self.assertEqual(
-            adapted["then"]["command"],
-            f"{WindowsFake.PYTHON} {WindowsFake.HOME}/.kiro/hooks/vibemon.py fileCreated",
+            command,
+            f"{WindowsFake.PYTHON} {WindowsFake.HOME}/.kiro/hooks/vibemon.py SessionStart",
         )
-        # Everything else about the definition survives the rewrite.
-        self.assertEqual(adapted["when"], {"type": "fileCreated", "patterns": ["**/*"]})
-        self.assertEqual(adapted["then"]["type"], "runCommand")
 
-    def test_windows_hook_file_has_no_tilde_or_python3(self):
+    def test_windows_hook_config_has_no_tilde_or_python3(self):
         with WindowsFake():
-            adapted = install.adapt_kiro_hook_file(KIRO_HOOK_FILE)
+            adapted = install.adapt_kiro_hook_config(KIRO_HOOK_CONFIG)
         self.assertNotIn("~", adapted)
         self.assertNotIn("python3", adapted)
 
-    def test_a_hook_file_without_vibemon_is_left_alone(self):
-        other = json.dumps({"then": {"type": "runCommand", "command": "echo hi"}})
+    def test_a_hook_config_without_vibemon_is_left_alone(self):
+        other = json.dumps({
+            "version": "v1",
+            "hooks": [{"action": {"type": "command", "command": "echo hi"}}],
+        })
         with WindowsFake():
-            self.assertEqual(install.adapt_kiro_hook_file(other), other)
+            self.assertEqual(install.adapt_kiro_hook_config(other), other)
+
+
+class LegacyKiroCleanupTest(unittest.TestCase):
+    def test_removes_only_vibemon_legacy_hooks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kiro_home = Path(directory)
+            agent_file = kiro_home / "agents" / "default.json"
+            agent_file.parent.mkdir(parents=True)
+            agent_file.write_text(json.dumps({
+                "name": "default",
+                "hooks": {"stop": [
+                    {"command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "agentStop"]},
+                    {"command": "python3", "args": ["~/my-hook.py"]},
+                ]},
+            }))
+            hooks_dir = kiro_home / "hooks"
+            hooks_dir.mkdir()
+            for name in install.LEGACY_KIRO_HOOK_FILES:
+                (hooks_dir / name).write_text("legacy")
+            current = hooks_dir / "vibemon.json"
+            current.write_text(KIRO_HOOK_CONFIG)
+
+            install.remove_legacy_kiro_hooks(kiro_home)
+
+            agent = json.loads(agent_file.read_text())
+            self.assertEqual(
+                agent["hooks"]["stop"],
+                [{"command": "python3", "args": ["~/my-hook.py"]}],
+            )
+            self.assertTrue(current.exists())
+            self.assertTrue(all(
+                not (hooks_dir / name).exists()
+                for name in install.LEGACY_KIRO_HOOK_FILES
+            ))
+
+
+class InstallKiroV1Test(unittest.TestCase):
+    def test_installs_global_config_and_migrates_legacy_agent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            kiro_home = home / ".kiro"
+            agent_file = kiro_home / "agents" / "default.json"
+            agent_file.parent.mkdir(parents=True)
+            agent_file.write_text(json.dumps({
+                "name": "default",
+                "hooks": {"stop": [
+                    {"command": "python3", "args": ["~/.kiro/hooks/vibemon.py", "agentStop"]},
+                    {"command": "python3", "args": ["~/my-hook.py"]},
+                ]},
+            }))
+            source = install.FileSource(DOCS_DIR)
+
+            with (
+                PosixFake(),
+                mock.patch.object(install.Path, "home", staticmethod(lambda: home)),
+                mock.patch.object(install, "configure_vibemon_config"),
+                mock.patch.object(install, "install_vibemon_shared", return_value=True),
+            ):
+                result = install.install_kiro(source)
+
+            self.assertTrue(result)
+            config = json.loads((kiro_home / "hooks" / "vibemon.json").read_text())
+            self.assertEqual(config["version"], "v1")
+            self.assertEqual(
+                json.loads(agent_file.read_text())["hooks"]["stop"],
+                [{"command": "python3", "args": ["~/my-hook.py"]}],
+            )
 
 
 class HookIdentityTest(unittest.TestCase):

@@ -440,10 +440,10 @@ python3 docs/install.py</code></pre>
                 <p>Note that the plan-usage fields (<code>usage5h</code>/<code>usageWeek</code> and their reset countdowns) are sent by the <strong>Claude Code and Codex hooks</strong>, since they both read from the same <code>usage.py</code>-refreshed cache (under separate <code>claude</code>/<code>codex</code> cache keys). The Kiro hook doesn't report usage, and OpenClaw reports context-window usage as <code>memory</code> instead.</p>
 
                 <h3>Codex Configuration</h3>
-                <p>Codex uses the same <code>~/.vibemon/config.json</code> as Claude Code and Kiro. Enable Codex hooks in <code>~/.codex/config.toml</code>:</p>
-                <pre><code>[features]
-hooks = true</code></pre>
-                <p>Then merge <a href="./codex/hooks.json">codex/hooks.json</a> into your existing <code>~/.codex/hooks.json</code> (do not overwrite). Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported.</p>
+                <p>Codex uses the same <code>~/.vibemon/config.json</code> as Claude Code and Kiro. Hooks are enabled by default; the installer preserves an explicit <code>[features].hooks = false</code> in <code>~/.codex/config.toml</code>. Merge <a href="./codex/hooks.json">codex/hooks.json</a> into your existing <code>~/.codex/hooks.json</code> (do not overwrite), then open <code>/hooks</code> and review/trust the new definitions.</p>
+
+                <h3>Kiro Configuration</h3>
+                <p>Kiro IDE 1.x and CLI 3.x discover the global v1 hook at <code>~/.kiro/hooks/vibemon.json</code>. It applies to every local project without selecting a custom agent. The installer removes only VibeMon's legacy agent hooks and <code>.kiro.hook</code> files during migration.</p>
 
                 <h3>OpenClaw Configuration</h3>
                 <p>The OpenClaw plugin reads transmission settings (<code>http_urls</code>, <code>serial_port</code>, <code>vibemon_url</code>, <code>vibemon_token</code>) from the same <code>~/.vibemon/config.json</code> as the other tools. It only needs to be registered and enabled in <code>~/.openclaw/openclaw.json</code> — OpenClaw doesn't auto-discover extension directories, so the plugin path must also be registered under <code>plugins.load.paths</code> or the manifest/entries config alone won't load it:</p>
@@ -613,29 +613,25 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                     <tbody>
                         <tr><td><code>SessionStart</code></td><td>start</td></tr>
                         <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
-                        <tr><td><code>PreToolUse</code> (Bash only)</td><td>working</td></tr>
+                        <tr><td><code>PreToolUse</code></td><td>working</td></tr>
                         <tr><td><code>SubagentStart</code></td><td>working</td></tr>
-                        <tr><td><code>PermissionRequest</code> (Bash only)</td><td>notification</td></tr>
-                        <tr><td><code>PostToolUse</code> (Bash only)</td><td>thinking</td></tr>
-                        <tr><td><code>SubagentStop</code></td><td>thinking</td></tr>
+                        <tr><td><code>PermissionRequest</code></td><td>notification</td></tr>
                         <tr><td><code>PreCompact</code></td><td>packing</td></tr>
-                        <tr><td><code>PostCompact</code></td><td>thinking</td></tr>
                         <tr><td><code>Stop</code></td><td>done</td></tr>
+                        <tr><td><code>SessionEnd</code></td><td>done</td></tr>
                     </tbody>
                 </table>
-                <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>PreToolUse</code>, <code>PermissionRequest</code>, and <code>PostToolUse</code> are registered with a <code>Bash</code>-only matcher (see <code>docs/codex/hooks.json</code>), so non-Bash tool calls (Read, Edit, etc.) don't trigger a state change.</p>
-                <p>Codex hooks are experimental, and Codex CLI's own hooks documentation currently lists Windows as unsupported.</p>
+                <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>PreToolUse</code> and <code>PermissionRequest</code> are registered without a matcher, so every tool call can trigger a state change. Informational hooks run in the background; <code>SessionEnd</code> runs synchronously.</p>
+                <p>After installation, open <code>/hooks</code> and review/trust new or changed VibeMon hook definitions.</p>
 
                 <h3>Kiro IDE</h3>
                 <table>
                     <thead><tr><th>Event</th><th>State</th></tr></thead>
                     <tbody>
-                        <tr><td><code>agentSpawn</code></td><td>start</td></tr>
-                        <tr><td><code>promptSubmit</code> / <code>userPromptSubmit</code></td><td>thinking</td></tr>
-                        <tr><td><code>fileCreated</code> / <code>fileEdited</code> / <code>fileDeleted</code></td><td>working</td></tr>
-                        <tr><td><code>preToolUse</code></td><td>working</td></tr>
-                        <tr><td><code>postToolUse</code></td><td>thinking</td></tr>
-                        <tr><td><code>agentStop</code> / <code>stop</code></td><td>done</td></tr>
+                        <tr><td><code>SessionStart</code></td><td>start</td></tr>
+                        <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
+                        <tr><td><code>PreToolUse</code></td><td>working</td></tr>
+                        <tr><td><code>Stop</code></td><td>done</td></tr>
                     </tbody>
                 </table>
 
