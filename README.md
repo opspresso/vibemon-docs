@@ -400,7 +400,7 @@ opencode has no Claude Code-style hooks, so the plugin bridges its events to the
 - `chat.message` → UserPromptSubmit
 - `tool.execute.before` → PreToolUse
 - `tool.execute.after` → PostToolUse
-- `permission.ask` → PermissionRequest
+- `permission.asked` (bus event; legacy `permission.ask` hook) → PermissionRequest
 - `experimental.session.compacting` → PreCompact
 - `session.idle` → Stop
 - `session.deleted` → SessionEnd

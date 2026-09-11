@@ -898,17 +898,21 @@ def adapt_opencode_plugin(content: str, opencode_home: Path = None) -> str:
     if not IS_WINDOWS and opencode_home == default_home:
         return content
 
-    python = hook_python() if IS_WINDOWS else "python3"
+    # Paths go into JavaScript string literals: forward-slash them and
+    # JSON-encode, so a Windows interpreter (`C:\Python...`) isn't read as
+    # backslash escapes and a quote in a custom home can't break parsing.
+    python = hook_path(Path(hook_python())) if IS_WINDOWS else "python3"
     result = content
     if IS_WINDOWS:
         result = _replace_opencode_line(
             result, "const PYTHON = ",
-            f'const PYTHON = "{python}";',
+            f"const PYTHON = {json.dumps(python)};",
         )
     if opencode_home != default_home:
+        script = hook_path(opencode_home / "hooks" / "vibemon.py")
         result = _replace_opencode_line(
             result, "const HOOK_SCRIPT = ",
-            f'const HOOK_SCRIPT = path.join("{hook_path(opencode_home / "hooks" / "vibemon.py")}");',
+            f"const HOOK_SCRIPT = path.join({json.dumps(script)});",
         )
     return result
 

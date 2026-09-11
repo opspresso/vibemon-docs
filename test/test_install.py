@@ -463,6 +463,15 @@ class LifecycleConfigTest(unittest.TestCase):
         self.assertEqual(event_map["Stop"], "done")
         self.assertEqual(event_map["SessionEnd"], "done")
 
+    def test_opencode_plugin_handles_permission_bus_event(self):
+        """Current opencode emits `permission.asked` on the bus; the
+        `permission.ask` plugin hook is legacy-only."""
+        plugin = (DOCS_DIR / "opencode" / "plugin" / "vibemon.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('case "permission.asked"', plugin)
+        self.assertIn('"permission.ask": async', plugin)
+
     def test_readme_and_html_tables_match_hook_adapters(self):
         readme = (DOCS_DIR.parent / "README.md").read_text(encoding="utf-8")
         index = (DOCS_DIR / "index.html").read_text(encoding="utf-8")
@@ -783,6 +792,26 @@ class AdaptOpencodePluginTest(unittest.TestCase):
             'const HOOK_SCRIPT = path.join("/tmp/opencode home/hooks/vibemon.py");', plugin
         )
         self.assertNotIn("path.join(OPENCODE_HOME,", plugin)
+
+    def test_windows_escapes_a_backslash_interpreter_path(self):
+        """`sys.executable` uses backslashes on Windows; raw interpolation
+        would let JavaScript read them as escape sequences."""
+        with WindowsFake(), mock.patch.object(
+            install.sys, "executable", r"C:\Python313\python.exe"
+        ):
+            plugin = install.adapt_opencode_plugin(OPENCODE_PLUGIN)
+        self.assertIn('const PYTHON = "C:/Python313/python.exe";', plugin)
+        self.assertNotIn("C:\\Python313", plugin)
+
+    def test_custom_home_quote_is_escaped(self):
+        with PosixFake():
+            plugin = install.adapt_opencode_plugin(
+                OPENCODE_PLUGIN, Path('/tmp/open"code')
+            )
+        self.assertIn(
+            'const HOOK_SCRIPT = path.join("/tmp/open\\"code/hooks/vibemon.py");',
+            plugin,
+        )
 
     def test_unknown_plugin_shape_raises(self):
         with self.assertRaisesRegex(RuntimeError, "Could not find 'const HOOK_SCRIPT"):

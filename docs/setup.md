@@ -595,29 +595,32 @@ openclaw gateway restart
 
 ### For opencode (Manual)
 
-Download the plugin and adapter files:
+Download the plugin and adapter files (set `OPENCODE_HOME` to your
+`OPENCODE_CONFIG_DIR` when it isn't `~/.config/opencode`):
 ```bash
-mkdir -p ~/.config/opencode/plugins ~/.config/opencode/hooks ~/.vibemon
-curl -o ~/.config/opencode/plugins/vibemon.js https://docs.vibemon.io/opencode/plugin/vibemon.js
-curl -o ~/.config/opencode/hooks/vibemon.py https://docs.vibemon.io/opencode/hooks/vibemon.py
+OPENCODE_HOME="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+mkdir -p "$OPENCODE_HOME/plugins" "$OPENCODE_HOME/hooks" ~/.vibemon
+curl -o "$OPENCODE_HOME/plugins/vibemon.js" https://docs.vibemon.io/opencode/plugin/vibemon.js
+curl -o "$OPENCODE_HOME/hooks/vibemon.py" https://docs.vibemon.io/opencode/hooks/vibemon.py
 curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
 curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
 curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
-chmod +x ~/.config/opencode/hooks/vibemon.py ~/.vibemon/usage.py
+chmod +x "$OPENCODE_HOME/hooks/vibemon.py" ~/.vibemon/usage.py
 ```
 
-No config file to merge: opencode auto-discovers plugins in
-`~/.config/opencode/plugins/` at startup, so dropping the plugin file in place
-is enough. Restart opencode after copying the files. The plugin bridges
-opencode events (`session.created`, `chat.message`, `tool.execute.before`,
-`tool.execute.after`, `permission.ask`,
+No config file to merge: opencode auto-discovers plugins in the
+`plugins/` directory under its config home at startup, so dropping the plugin
+file in place is enough. Restart opencode after copying the files. The plugin
+bridges opencode events (`session.created`, `chat.message`,
+`tool.execute.before`, `tool.execute.after`, `permission.asked`,
 `experimental.session.compacting`, `session.idle`, `session.deleted`) to
 VibeMon's hook events, which the adapter maps to states.
 
 On Windows, open the plugin file and replace the two constants with absolute
-paths (there is no `python3` on `PATH` and no `~` expansion in spawn):
-- `const PYTHON = "python3";` → your Python (`python -c "import sys; print(sys.executable)"`)
-- `const HOOK_SCRIPT = path.join(...);` → the absolute path of `vibemon.py`
+paths — the default `python3` isn't on `PATH`, and the installer isn't around to
+inline them:
+- `const PYTHON = "python3";` → your Python (`python -c "import sys; print(sys.executable)"`, forward slashes are fine)
+- `const HOOK_SCRIPT = path.join(OPENCODE_HOME, "hooks", "vibemon.py");` → `const HOOK_SCRIPT = "C:/absolute/path/to/hooks/vibemon.py";`
 
 `OPENCODE_CONFIG_DIR` (default `~/.config/opencode`) changes where the plugin
 and adapter are installed; point it at your opencode config home when it isn't
@@ -708,9 +711,9 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 ### opencode
 | Issue | Solution |
 |-------|----------|
-| Plugin not loading | Verify `~/.config/opencode/plugins/vibemon.js` exists, then restart opencode (plugins are discovered at startup) |
-| Hook not triggering | Check `~/.config/opencode/hooks/vibemon.py` runs `python3` and `~/.vibemon/vibemon_core.py` exists |
-| Permission denied | Run `chmod +x ~/.config/opencode/hooks/vibemon.py` |
+| Plugin not loading | Verify `$OPENCODE_CONFIG_DIR/plugins/vibemon.js` (default `~/.config/opencode/plugins/vibemon.js`) exists, then restart opencode (plugins are discovered at startup) |
+| Hook not triggering | Check the adapter runs and `~/.vibemon/vibemon_core.py` exists. On Windows confirm the plugin's `PYTHON`/`HOOK_SCRIPT` constants point at your Python and `hooks/vibemon.py` |
+| Permission denied | Run `chmod +x "$OPENCODE_CONFIG_DIR/hooks/vibemon.py"` (default `~/.config/opencode/hooks/vibemon.py`) |
 
 ### Windows
 | Issue | Solution |

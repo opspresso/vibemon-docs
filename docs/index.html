@@ -677,7 +677,7 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                     <li><code>chat.message</code> &rarr; UserPromptSubmit</li>
                     <li><code>tool.execute.before</code> &rarr; PreToolUse</li>
                     <li><code>tool.execute.after</code> &rarr; PostToolUse</li>
-                    <li><code>permission.ask</code> &rarr; PermissionRequest</li>
+                    <li><code>permission.asked</code> (bus event; legacy <code>permission.ask</code> hook) &rarr; PermissionRequest</li>
                     <li><code>experimental.session.compacting</code> &rarr; PreCompact</li>
                     <li><code>session.idle</code> &rarr; Stop</li>
                     <li><code>session.deleted</code> &rarr; SessionEnd</li>
