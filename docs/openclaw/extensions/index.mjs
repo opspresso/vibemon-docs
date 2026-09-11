@@ -136,15 +136,22 @@ function resolveConfig() {
     ? pluginConfig.httpUrls.filter((u) => typeof u === "string" && u)
     : [];
 
+  const serialPort = firstNonEmpty(
+    pluginConfig.serialPort,
+    sharedConfig.serial_port,
+    null,
+  );
+
   return {
     projectName: pluginConfig.projectName ?? DEFAULT_CONFIG.projectName,
     character: pluginConfig.character ?? DEFAULT_CONFIG.character,
     serialEnabled: typeof pluginConfig.serialEnabled === "boolean"
       ? pluginConfig.serialEnabled
-      : Boolean(sharedConfig.serial_port),
+      : Boolean(serialPort),
+    serialPort,
     httpEnabled: typeof pluginConfig.httpEnabled === "boolean"
       ? pluginConfig.httpEnabled
-      : sharedHttpUrls.length > 0,
+      : pluginHttpUrls.length > 0 || sharedHttpUrls.length > 0,
     httpUrls: pluginHttpUrls.length > 0
       ? pluginHttpUrls
       : sharedHttpUrls.length > 0
@@ -316,14 +323,46 @@ function findTtyDevice() {
 }
 
 /**
+ * Resolve a configured serial_port: expand `~`, and expand a single `*`
+ * wildcard against the device directory (mirroring vibemon_core's
+ * resolve_serial_port). Returns null when nothing matches.
+ */
+function resolveSerialPort(pattern) {
+  if (typeof pattern !== "string" || !pattern) return null;
+
+  let resolved = pattern.trim();
+  if (resolved.startsWith("~")) {
+    resolved = path.join(os.homedir(), resolved.slice(1));
+  }
+  if (!resolved.includes("*")) {
+    return fs.existsSync(resolved) ? resolved : null;
+  }
+
+  const dir = path.dirname(resolved);
+  const base = path.basename(resolved);
+  const regex = new RegExp(
+    "^" + base.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$",
+  );
+  try {
+    const matches = fs.readdirSync(dir).filter((name) => regex.test(name)).sort();
+    return matches.length > 0 ? path.join(dir, matches[0]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Send status to ESP32 via serial
  */
 function sendSerial(payload) {
   if (!config.serialEnabled) return;
 
-  // Find TTY device if not found yet
+  // Resolve the configured port first; fall back to auto-detection when no
+  // explicit serial_port is set.
   if (!ttyPath) {
-    ttyPath = findTtyDevice();
+    ttyPath = config.serialPort
+      ? resolveSerialPort(config.serialPort)
+      : findTtyDevice();
     if (ttyPath) {
       debug(`Using TTY: ${ttyPath}`);
     }
@@ -636,6 +675,9 @@ const plugin = {
     // Send start state on gateway start
     api.on("gateway_start", async () => {
       debug("Gateway started -> start");
+      // New gateway lifetime: drop the previous session's context-window
+      // reading so `start`/`thinking` don't report a stale gauge.
+      lastMemoryPercent = null;
       await autoLaunchDesktop();
       sendStatus("start", { note: "gateway_started" });
     });
@@ -663,7 +705,7 @@ const plugin = {
     // Before tool call -> working
     api.on("before_tool_call", (event, ctx) => {
       cancelDoneTimer();
-      const toolName = event.toolName || ctx.toolName || "unknown";
+      const toolName = event?.toolName || ctx?.toolName || "unknown";
       debug(`Tool call: ${toolName} -> working`);
       sendStatus("working", { tool: toolName });
     });
@@ -691,9 +733,9 @@ const plugin = {
 
     // Message sent -> schedule done
     api.on("message_sent", (event, ctx) => {
-      debug(`Message sent to ${event.to} (success: ${event.success})`);
+      debug(`Message sent to ${event?.to} (success: ${event?.success})`);
 
-      if (event.success) {
+      if (event?.success) {
         // Schedule done with delay
         scheduleDone();
       }
@@ -701,9 +743,9 @@ const plugin = {
 
     // Agent end -> schedule done (fallback)
     api.on("agent_end", (event, ctx) => {
-      debug(`Agent ended (success: ${event.success})`);
+      debug(`Agent ended (success: ${event?.success})`);
 
-      if (event.success && !doneTimer) {
+      if (event?.success && !doneTimer) {
         // Only schedule if not already scheduled by message_sent
         scheduleDone();
       }
@@ -714,6 +756,8 @@ const plugin = {
       cancelDoneTimer();
       debug("Session ended -> done");
       sendStatus("done");
+      // Clear context usage for the next session (see gateway_start).
+      lastMemoryPercent = null;
     });
 
     // Gateway stop -> done

@@ -32,15 +32,16 @@ const OPENCODE_HOME = path.join(os.homedir(), ".config", "opencode");
 const HOOK_SCRIPT = path.join(OPENCODE_HOME, "hooks", "vibemon.py");
 const PYTHON = "python3";
 
-// Cap concurrent adapter processes. Each bridged event spawns a Python that
-// may take seconds (HTTP/serial timeout), so a burst of tool events could
-// otherwise pile up unbounded children. When the cap is reached only the
-// newest payload is kept and sent once a slot frees.
-const MAX_ACTIVE_CHILDREN = 8;
+// Adapter children run one at a time so state transitions reach the monitor
+// in order: each spawn is fire-and-forget, so running them concurrently (as
+// the previous slot-based cap did) let a later `done` land before an earlier
+// `working`. A bounded queue keeps the newest payloads when a burst outpaces
+// the drain, so the latest state always wins.
+const MAX_QUEUED_PAYLOADS = 32;
 
 const sessions = new Map();
-let activeChildren = 0;
-let pendingPayload = null;
+const payloadQueue = [];
+let draining = false;
 
 function modelName(model) {
   if (!model) return "";
@@ -72,26 +73,29 @@ function sendStatus(eventName, extra = {}) {
 }
 
 function dispatch(payload) {
-  if (activeChildren >= MAX_ACTIVE_CHILDREN) {
-    // Coalesce a burst into the latest payload; it is sent when a slot frees.
-    pendingPayload = payload;
-    return;
+  payloadQueue.push(payload);
+  if (payloadQueue.length > MAX_QUEUED_PAYLOADS) {
+    // Drop the oldest, not the newest: the latest state must still be sent.
+    payloadQueue.shift();
   }
-  spawnAdapter(payload);
+  drain();
+}
+
+function drain() {
+  if (draining) return;
+  const next = payloadQueue.shift();
+  if (next === undefined) return;
+  draining = true;
+  spawnAdapter(next);
 }
 
 function spawnAdapter(payload) {
-  activeChildren += 1;
   let settled = false;
   const settle = () => {
     if (settled) return;
     settled = true;
-    activeChildren -= 1;
-    if (pendingPayload !== null) {
-      const next = pendingPayload;
-      pendingPayload = null;
-      spawnAdapter(next);
-    }
+    draining = false;
+    drain();
   };
 
   let child;
