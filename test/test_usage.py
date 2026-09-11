@@ -1,5 +1,7 @@
 import io
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -272,6 +274,34 @@ class UsageTest(unittest.TestCase):
             self.assertEqual(usage.main(), 1)
 
         self.assertIn("cache write failed", error.getvalue())
+
+    def test_usage_cache_path_honors_env_override(self):
+        with patch.dict(os.environ, {"VIBEMON_CACHE_PATH": "/tmp/custom/projects.json"}):
+            self.assertEqual(
+                usage.get_usage_cache_path(),
+                os.path.join("/tmp/custom", "usage.json"),
+            )
+
+    def test_claude_fallback_spawn_suppresses_hooks(self):
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured.update(kwargs)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(
+                    usage,
+                    "get_usage_cache_path",
+                    return_value=str(Path(directory) / "usage.json"),
+                ),
+                patch.object(usage, "fetch_claude_usage_live", return_value=None),
+                patch.object(usage.subprocess, "run", side_effect=fake_run),
+            ):
+                usage.refresh_usage({"claude"})
+
+        self.assertEqual(captured.get("env", {}).get("VIBEMON_SUPPRESS_HOOKS"), "1")
 
 
 if __name__ == "__main__":

@@ -570,9 +570,10 @@ def send_serial_raw(port: str, data: str) -> bool:
 
             # Write data. Open non-blocking so a device that never asserts
             # DCD/carrier can't hang this call indefinitely. os.write() may
-            # return a short count, so loop until every byte is sent; a
-            # BlockingIOError mid-loop propagates to the except below rather
-            # than silently sending a truncated payload.
+            # return a short count, so loop until every byte is sent. A full
+            # device buffer raises BlockingIOError, which is retried briefly
+            # (rather than aborting mid-frame) and gives up after the same
+            # bound as the lock; a zero-byte write would otherwise spin forever.
             open_flags = os.O_WRONLY
             if hasattr(os, "O_NONBLOCK"):
                 open_flags |= os.O_NONBLOCK
@@ -580,8 +581,21 @@ def send_serial_raw(port: str, data: str) -> bool:
             try:
                 payload_bytes = (data + "\n").encode()
                 written = 0
+                stalls = 0
                 while written < len(payload_bytes):
-                    written += os.write(port_fd, payload_bytes[written:])
+                    try:
+                        count = os.write(port_fd, payload_bytes[written:])
+                    except BlockingIOError:
+                        stalls += 1
+                        if stalls > SERIAL_LOCK_MAX_RETRIES:
+                            debug_log("Serial write stalled (device buffer full)")
+                            return False
+                        time.sleep(SERIAL_LOCK_RETRY_INTERVAL)
+                        continue
+                    if count <= 0:
+                        debug_log("Serial write made no progress; aborting")
+                        return False
+                    written += count
             finally:
                 os.close(port_fd)
 
@@ -1160,14 +1174,6 @@ def run(
       event name as the first argument, e.g. `vibemon.py promptSubmit`)
     - event_aliases: normalize a tool's payload event names before mapping
     """
-    if os.environ.get("VIBEMON_SUPPRESS_HOOKS") == "1":
-        # Set by VibeMon's own usage-refresher when it spawns
-        # `claude -p "/usage"` to refresh the plan-usage cache — that
-        # subprocess is a real Claude Code session and would otherwise report
-        # status here under a ".vibemon" project (its cwd).
-        debug_log("Hook suppressed (VIBEMON_SUPPRESS_HOOKS=1)")
-        return
-
     argv_event = ""
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
@@ -1177,6 +1183,15 @@ def run(
             sys.exit(0 if result else 1)
         if argv_event_fallback:
             argv_event = cmd
+
+    if os.environ.get("VIBEMON_SUPPRESS_HOOKS") == "1":
+        # Set by VibeMon's own usage-refresher when it spawns
+        # `claude -p "/usage"` to refresh the plan-usage cache — that
+        # subprocess is a real Claude Code session and would otherwise report
+        # status here under a ".vibemon" project (its cwd). Checked only after
+        # argv dispatch so explicit `--status`/`--lock` commands still run.
+        debug_log("Hook suppressed (VIBEMON_SUPPRESS_HOOKS=1)")
+        return
 
     # Read and parse input once
     input_raw = read_input()
