@@ -77,7 +77,7 @@ The script will:
 2. Merge hooks into existing config files (preserves your settings) — every config it touches is copied to `<name>.bak` first and rewritten atomically
 3. Configure your token (in `~/.vibemon/config.json`, created `0600`)
 
-The installer honors `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIRO_HOME`, and `OPENCODE_CONFIG_DIR`. When an override is set, files and hook commands use that resolved directory instead of `~/.claude`, `~/.codex`, `~/.kiro`, or `~/.config/opencode`. Kiro is detected through either `kiro` or `kiro-cli`.
+The installer honors `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIRO_HOME`, and `OPENCODE_CONFIG_DIR`. When an override is set, files and hook commands use that resolved directory instead of `~/.claude`, `~/.codex`, `~/.kiro`, or `$XDG_CONFIG_HOME/opencode` (falling back to `~/.config/opencode`). Kiro is detected through either `kiro` or `kiro-cli`.
 
 **Exit status:** `0` only when every selected platform succeeded. A tool that isn't installed is reported as *skipped* and doesn't fail the run; a platform that genuinely failed exits `1`, even if others succeeded.
 
@@ -596,9 +596,10 @@ openclaw gateway restart
 ### For opencode (Manual)
 
 Download the plugin and adapter files (set `OPENCODE_HOME` to your
-`OPENCODE_CONFIG_DIR` when it isn't `~/.config/opencode`):
+`OPENCODE_CONFIG_DIR` or `XDG_CONFIG_HOME/opencode` when it isn't
+`~/.config/opencode`):
 ```bash
-OPENCODE_HOME="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+OPENCODE_HOME="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
 mkdir -p "$OPENCODE_HOME/plugins" "$OPENCODE_HOME/hooks" ~/.vibemon
 curl -o "$OPENCODE_HOME/plugins/vibemon.js" https://docs.vibemon.io/opencode/plugin/vibemon.js
 curl -o "$OPENCODE_HOME/hooks/vibemon.py" https://docs.vibemon.io/opencode/hooks/vibemon.py
@@ -622,7 +623,8 @@ inline them:
 - `const PYTHON = "python3";` → your Python (`python -c "import sys; print(sys.executable)"`, forward slashes are fine)
 - `const HOOK_SCRIPT = path.join(OPENCODE_HOME, "hooks", "vibemon.py");` → `const HOOK_SCRIPT = "C:/absolute/path/to/hooks/vibemon.py";`
 
-`OPENCODE_CONFIG_DIR` (default `~/.config/opencode`) changes where the plugin
+`OPENCODE_CONFIG_DIR` (default `$XDG_CONFIG_HOME/opencode`, falling back to
+`~/.config/opencode`) changes where the plugin
 and adapter are installed; point it at your opencode config home when it isn't
 under `~/.config/opencode`.
 

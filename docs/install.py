@@ -764,6 +764,21 @@ def tool_home(env_var: str, default_dir: str) -> Path:
     return Path.home() / default_dir
 
 
+def opencode_config_home() -> Path:
+    """Resolve opencode's config home.
+
+    `OPENCODE_CONFIG_DIR` wins; otherwise opencode reads its global config from
+    `$XDG_CONFIG_HOME/opencode` (falling back to `~/.config/opencode`), so the
+    installer writes plugins where opencode will discover them.
+    """
+    configured = os.environ.get("OPENCODE_CONFIG_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    return base / "opencode"
+
+
 def display_path(path: Path) -> str:
     """Render paths under the user's home with a compact ~/ prefix."""
     try:
@@ -893,7 +908,7 @@ def adapt_opencode_plugin(content: str, opencode_home: Path = None) -> str:
       hook-script path instead of leaving os.homedir() resolution to the
       plugin.
     """
-    opencode_home = opencode_home or tool_home("OPENCODE_CONFIG_DIR", ".config/opencode")
+    opencode_home = opencode_home or opencode_config_home()
     default_home = Path.home() / ".config" / "opencode"
     if not IS_WINDOWS and opencode_home == default_home:
         return content
@@ -1534,7 +1549,7 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
 
 def install_opencode(source: FileSource, cli_token: str = None) -> bool:
     """Install VibeMon's plugin and hook adapter for opencode."""
-    opencode_home = tool_home("OPENCODE_CONFIG_DIR", ".config/opencode")
+    opencode_home = opencode_config_home()
     if not is_tool_installed("opencode", opencode_home):
         print(f"\n{colored('!', 'yellow')} opencode not detected. Skipping installation.")
         return SKIPPED
@@ -1782,7 +1797,7 @@ def uninstall_openclaw(source: FileSource = None, cli_token: str = None) -> bool
 
 def uninstall_opencode(source: FileSource = None, cli_token: str = None) -> bool:
     """Remove VibeMon's plugin and hook adapter from opencode."""
-    opencode_home = tool_home("OPENCODE_CONFIG_DIR", ".config/opencode")
+    opencode_home = opencode_config_home()
     if not opencode_home.exists():
         print(f"\n{colored('!', 'yellow')} opencode not detected. Nothing to remove.")
         return SKIPPED

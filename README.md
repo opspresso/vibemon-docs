@@ -33,7 +33,7 @@ npx vibemon@latest
 
 Open the app, go to **Settings > AI Tools**, and click **Install** for Claude Code, Codex CLI, Kiro IDE, OpenClaw, or opencode. This installs the hooks and writes `~/.vibemon/config.json` for you. See [vibemon-app](https://github.com/opspresso/vibemon-app) for details.
 
-The installer and Desktop App honor each tool's user-config override: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIRO_HOME`, and `OPENCODE_CONFIG_DIR` (default `~/.config/opencode` for opencode). Hook commands are rewritten to the resolved directory, including paths that contain spaces. Kiro detection accepts both the IDE's `kiro` command and the CLI's `kiro-cli` command.
+The installer and Desktop App honor each tool's user-config override: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIRO_HOME`, and `OPENCODE_CONFIG_DIR` (default `$XDG_CONFIG_HOME/opencode`, falling back to `~/.config/opencode`). Hook commands are rewritten to the resolved directory, including paths that contain spaces. Kiro detection accepts both the IDE's `kiro` command and the CLI's `kiro-cli` command.
 
 ### Non-interactive Install (AI agents, CI)
 
@@ -156,7 +156,7 @@ After installing or updating the plugin, rebuild OpenClaw's persisted plugin reg
 
 The opencode plugin reads transmission settings (`http_urls`, `serial_port`, `vibemon_url`, `vibemon_token`) from the same `~/.vibemon/config.json` as the other tools. opencode has no Claude Code-style hooks, so the plugin at `~/.config/opencode/plugins/vibemon.js` bridges opencode events to VibeMon's hook pipeline: it spawns the adapter at `~/.config/opencode/hooks/vibemon.py`, which feeds `vibemon_core.py`. opencode auto-discovers plugins in `~/.config/opencode/plugins/` at startup, so no config registration is needed — install the plugin file and restart opencode.
 
-The installer honors an `OPENCODE_CONFIG_DIR` override (default `~/.config/opencode`); on Windows it also pins the plugin's interpreter to the Python that ran the installer, since `python3` isn't on `PATH` there.
+The installer honors an `OPENCODE_CONFIG_DIR` override (default `$XDG_CONFIG_HOME/opencode`, falling back to `~/.config/opencode`); on Windows it also pins the plugin's interpreter to the Python that ran the installer, since `python3` isn't on `PATH` there.
 
 ## CLI Commands
 

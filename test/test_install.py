@@ -517,7 +517,7 @@ class WindowsFake:
             mock.patch.object(install, "has_git_bash", lambda: True),
             mock.patch.dict(os.environ, {
                 "CLAUDE_CONFIG_DIR": "", "CODEX_HOME": "", "KIRO_HOME": "",
-                "OPENCODE_CONFIG_DIR": "",
+                "OPENCODE_CONFIG_DIR": "", "XDG_CONFIG_HOME": "",
             }),
         ]
         for patch in self._patches:
@@ -544,7 +544,7 @@ class PosixFake:
             mock.patch.object(install, "IS_WINDOWS", False),
             mock.patch.dict(os.environ, {
                 "CLAUDE_CONFIG_DIR": "", "CODEX_HOME": "", "KIRO_HOME": "",
-                "OPENCODE_CONFIG_DIR": "",
+                "OPENCODE_CONFIG_DIR": "", "XDG_CONFIG_HOME": "",
             }),
         ]
         for patch in self._patches:
@@ -758,6 +758,31 @@ class AdaptKiroTest(unittest.TestCase):
         })
         with WindowsFake():
             self.assertEqual(install.adapt_kiro_hook_config(other), other)
+
+
+class OpencodeConfigHomeTest(unittest.TestCase):
+    def test_honors_the_config_dir_override(self):
+        with mock.patch.dict(os.environ, {
+            "OPENCODE_CONFIG_DIR": "~/opencode-work", "XDG_CONFIG_HOME": "/tmp/xdg",
+        }):
+            self.assertEqual(
+                install.opencode_config_home(),
+                Path("~/opencode-work").expanduser().resolve(),
+            )
+
+    def test_falls_back_to_xdg_config_home(self):
+        with mock.patch.dict(os.environ, {
+            "OPENCODE_CONFIG_DIR": "", "XDG_CONFIG_HOME": "/tmp/xdg",
+        }):
+            self.assertEqual(install.opencode_config_home(), Path("/tmp/xdg/opencode"))
+
+    def test_defaults_to_dot_config(self):
+        with mock.patch.dict(os.environ, {
+            "OPENCODE_CONFIG_DIR": "", "XDG_CONFIG_HOME": "",
+        }):
+            self.assertEqual(
+                install.opencode_config_home(), Path.home() / ".config" / "opencode"
+            )
 
 
 class AdaptOpencodePluginTest(unittest.TestCase):
