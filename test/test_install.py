@@ -1089,3 +1089,132 @@ class UninstallHooksFromJsonTest(unittest.TestCase):
             json.loads(self.path.read_text(encoding="utf-8")),
             {"version": 2, "hooks": {"Stop": [USER_ENTRY]}},
         )
+
+
+class EnsureCodexStatusLineValidityTest(unittest.TestCase):
+    def _load(self, text):
+        try:
+            import tomllib
+        except ImportError:  # Python < 3.11
+            self.skipTest("tomllib unavailable")
+        return tomllib.loads(text)
+
+    def test_inline_array_is_merged_without_duplicate_key(self):
+        result = ensure_codex_status_line('[tui]\nstatus_line = ["model-name"]\n')
+        self.assertEqual(result.count("status_line"), 1)
+        parsed = self._load(result)
+        self.assertIn("model-name", parsed["tui"]["status_line"])
+        self.assertIn("context-used", parsed["tui"]["status_line"])
+
+    def test_multiline_without_trailing_comma_stays_valid(self):
+        result = ensure_codex_status_line('[tui]\nstatus_line = [\n  "model-name"\n]\n')
+        parsed = self._load(result)
+        self.assertIn("model-name", parsed["tui"]["status_line"])
+        self.assertIn("context-window-size", parsed["tui"]["status_line"])
+
+    def test_non_array_value_is_replaced(self):
+        result = ensure_codex_status_line('[tui]\nstatus_line = "compact"\n')
+        parsed = self._load(result)
+        self.assertEqual(parsed["tui"]["status_line"], install.CODEX_STATUS_LINE_ITEMS)
+
+
+class WindowsInterpreterPathTest(unittest.TestCase):
+    BACKSLASH_PYTHON = r"C:\Python313\python.exe"
+
+    def test_statusline_command_forward_slashes_interpreter(self):
+        with WindowsFake(), mock.patch.object(
+            install.sys, "executable", self.BACKSLASH_PYTHON
+        ):
+            settings = install.adapt_claude_settings(json.loads(json.dumps(CLAUDE_SETTINGS)))
+        self.assertEqual(
+            settings["statusLine"]["command"],
+            "C:/Python313/python.exe C:/Users/dev/.claude/statusline.py",
+        )
+
+    def test_codex_command_windows_forward_slashes_interpreter(self):
+        with WindowsFake(), mock.patch.object(
+            install.sys, "executable", self.BACKSLASH_PYTHON
+        ):
+            hooks = install.adapt_codex_hooks(json.loads(json.dumps(CODEX_HOOKS)))
+        self.assertEqual(
+            hooks["hooks"]["Stop"][0]["hooks"][0]["commandWindows"],
+            "C:/Python313/python.exe C:/Users/dev/.codex/hooks/vibemon.py",
+        )
+
+    def test_kiro_command_forward_slashes_interpreter(self):
+        with WindowsFake(), mock.patch.object(
+            install.sys, "executable", self.BACKSLASH_PYTHON
+        ):
+            config = json.loads(install.adapt_kiro_hook_config(KIRO_HOOK_CONFIG))
+        self.assertEqual(
+            config["hooks"][0]["action"]["command"],
+            "C:/Python313/python.exe C:/Users/dev/.kiro/hooks/vibemon.py SessionStart",
+        )
+
+
+class InstallClaudeSettingsTest(unittest.TestCase):
+    def _run(self, settings):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            claude_home = home / ".claude"
+            claude_home.mkdir()
+            settings_file = claude_home / "settings.json"
+            settings_file.write_text(json.dumps(settings), encoding="utf-8")
+            source = install.FileSource(DOCS_DIR)
+            install.BACKED_UP.clear()
+            with (
+                PosixFake(),
+                mock.patch.object(install.Path, "home", staticmethod(lambda: home)),
+                mock.patch.object(install.shutil, "which", return_value="/usr/bin/claude"),
+                mock.patch.object(install, "configure_vibemon_config"),
+                mock.patch.object(install, "configure_statusline_config", return_value=True),
+                mock.patch.object(install, "install_vibemon_shared", return_value=True),
+            ):
+                result = install.install_claude(source)
+            install.BACKED_UP.clear()
+            return result, json.loads(settings_file.read_text(encoding="utf-8"))
+
+    def test_existing_vibemon_hook_fields_are_refreshed(self):
+        old_hook = {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": True,
+            "timeout": 1,
+        }
+        result, settings = self._run({"hooks": {"SessionEnd": [{"hooks": [old_hook]}]}})
+        self.assertTrue(result)
+        session_end = settings["hooks"]["SessionEnd"][0]["hooks"][0]
+        self.assertNotIn("async", session_end)
+        self.assertEqual(session_end["timeout"], 10)
+
+    def test_non_object_status_line_does_not_abort_install(self):
+        with mock.patch.object(install, "ask_yes_no", return_value=False):
+            result, settings = self._run(
+                {"hooks": {}, "statusLine": "python3 ~/custom.py"}
+            )
+        self.assertTrue(result)
+        self.assertEqual(settings["statusLine"], "python3 ~/custom.py")
+
+    def test_non_object_status_line_replaced_when_accepted(self):
+        with mock.patch.object(install, "ask_yes_no", return_value=True):
+            result, settings = self._run({"hooks": {}, "statusLine": 5})
+        self.assertTrue(result)
+        self.assertIsInstance(settings["statusLine"], dict)
+
+
+class ConfigRobustnessTest(unittest.TestCase):
+    def test_get_hook_identities_tolerates_null_hooks(self):
+        self.assertEqual(install.get_hook_identities([{"hooks": None}]), set())
+
+    def test_uninstall_hooks_from_json_ignores_non_object_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hooks.json"
+            path.write_text("[]", encoding="utf-8")
+            install.BACKED_UP.clear()
+            install._uninstall_hooks_from_json(path, [], "hooks.json")
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), [])
+
+    def test_download_file_converts_oserror_to_runtime_error(self):
+        with mock.patch.object(install, "urlopen", side_effect=TimeoutError("stall")):
+            with self.assertRaises(RuntimeError):
+                install.download_file("https://example.invalid/x")

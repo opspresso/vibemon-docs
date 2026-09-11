@@ -1,5 +1,5 @@
 {
-  "installer": "b83ca3ebb053050534fb852c29e3eec530a4032af49d1fdc120499124f4a65fb",
+  "installer": "46841b2f7cf604e51b6669a56ff2df28da4b83fbbded9d81fa74c6e4fa41cf34",
   "files": {
     "vibemon/usage.py": "868dea75c7abdd3b06b900883f2141894cb657bef5ece484931c252087a02248",
     "vibemon/usage_cache.py": "28e23a559d5f9e8910853b88718f0417ef4a664fce0c4a07d2b7aa54ec364322",
