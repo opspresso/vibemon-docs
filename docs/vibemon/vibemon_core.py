@@ -615,9 +615,18 @@ def send_serial(port: str, data: str) -> bool:
 
     lock_fd = None
     try:
-        # Write our payload to the debounce file (with lock)
+        # Write our payload to the debounce file (with lock). A blocked
+        # `flock(LOCK_EX)` here would stall the hook until the lock is free,
+        # and the lock is held while send_serial_raw() drives a possibly
+        # unresponsive device — a hung port could deadlock every subsequent
+        # hook process. Try non-blocking first and fall back to a direct
+        # send when the lock is busy.
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if not _acquire_lock(lock_fd):
+            debug_log("Serial debounce: lock busy, sending directly")
+            os.close(lock_fd)
+            lock_fd = None
+            return send_serial_raw(port, data)
         try:
             with open(debounce_path, "w", encoding="utf-8") as f:
                 json.dump({"id": my_id, "data": data, "time": time.time()}, f)
@@ -631,7 +640,11 @@ def send_serial(port: str, data: str) -> bool:
 
         # Check if we're still the latest (with lock)
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if not _acquire_lock(lock_fd):
+            debug_log("Serial debounce: re-lock busy, sending directly")
+            os.close(lock_fd)
+            lock_fd = None
+            return send_serial_raw(port, data)
         try:
             with open(debounce_path, encoding="utf-8") as f:
                 state = json.load(f)

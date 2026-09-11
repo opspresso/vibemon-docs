@@ -32,6 +32,11 @@ curl -fsSL https://docs.vibemon.io/install.py | python3 - --kiro
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --openclaw
 ```
 
+**For opencode:**
+```bash
+curl -fsSL https://docs.vibemon.io/install.py | python3 - --opencode
+```
+
 **With token (recommended):**
 ```bash
 # Create your own token (8-64 chars, a-z, 0-9, _, -)
@@ -60,8 +65,9 @@ console code page, corrupting the script before Python parses it. `install.ps1`
 locates a Python (`py -3`, then `python`), downloads `install.py`, checks it
 against the published `manifest.json`, and runs it with these arguments.
 
-On Windows the installer covers **Claude Code**, **Codex CLI** and **Kiro IDE**
-plus the shared `~/.vibemon` scripts; `--openclaw` is reported as skipped.
+On Windows the installer covers **Claude Code**, **Codex CLI**, **Kiro IDE**
+and **opencode** plus the shared `~/.vibemon` scripts; `--openclaw` is reported
+as skipped.
 `-y`/`--yes` auto-approves every prompt, including replacing a status line you already configured. It doesn't select a platform by itself, so combine it with a platform flag or `--all`.
 
 A platform flag on its own (`--claude`) runs without prompting but is **not** the same as `--yes`: VibeMon's own scripts are upgraded in place, while anything you own — most importantly an existing `statusLine` — is left alone and reported as unchanged. Pass `--yes` when you do want it replaced.
@@ -71,7 +77,7 @@ The script will:
 2. Merge hooks into existing config files (preserves your settings) — every config it touches is copied to `<name>.bak` first and rewritten atomically
 3. Configure your token (in `~/.vibemon/config.json`, created `0600`)
 
-The installer honors `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `KIRO_HOME`. When an override is set, files and hook commands use that resolved directory instead of `~/.claude`, `~/.codex`, or `~/.kiro`. Kiro is detected through either `kiro` or `kiro-cli`.
+The installer honors `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIRO_HOME`, and `OPENCODE_CONFIG_DIR`. When an override is set, files and hook commands use that resolved directory instead of `~/.claude`, `~/.codex`, `~/.kiro`, or `$XDG_CONFIG_HOME/opencode` (falling back to `~/.config/opencode`). Kiro is detected through either `kiro` or `kiro-cli`.
 
 **Exit status:** `0` only when every selected platform succeeded. A tool that isn't installed is reported as *skipped* and doesn't fail the run; a platform that genuinely failed exits `1`, even if others succeeded.
 
@@ -118,7 +124,7 @@ If automatic installation doesn't work, follow the steps below for your platform
 
 ### Step 1: Create Configuration (all tools)
 
-Create `~/.vibemon/config.json` (shared by Claude Code, Codex, Kiro, and the OpenClaw plugin):
+Create `~/.vibemon/config.json` (shared by Claude Code, Codex, Kiro, the OpenClaw plugin, and the opencode plugin):
 
 ```json
 {
@@ -587,6 +593,41 @@ openclaw plugins registry --refresh
 openclaw gateway restart
 ```
 
+### For opencode (Manual)
+
+Download the plugin and adapter files (set `OPENCODE_HOME` to your
+`OPENCODE_CONFIG_DIR` or `XDG_CONFIG_HOME/opencode` when it isn't
+`~/.config/opencode`):
+```bash
+OPENCODE_HOME="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
+mkdir -p "$OPENCODE_HOME/plugins" "$OPENCODE_HOME/hooks" ~/.vibemon
+curl -o "$OPENCODE_HOME/plugins/vibemon.js" https://docs.vibemon.io/opencode/plugin/vibemon.js
+curl -o "$OPENCODE_HOME/hooks/vibemon.py" https://docs.vibemon.io/opencode/hooks/vibemon.py
+curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
+curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
+curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
+chmod +x "$OPENCODE_HOME/hooks/vibemon.py" ~/.vibemon/usage.py
+```
+
+No config file to merge: opencode auto-discovers plugins in the
+`plugins/` directory under its config home at startup, so dropping the plugin
+file in place is enough. Restart opencode after copying the files. The plugin
+bridges opencode events (`session.created`, `chat.message`,
+`tool.execute.before`, `tool.execute.after`, `permission.asked`,
+`experimental.session.compacting`, `session.idle`, `session.deleted`) to
+VibeMon's hook events, which the adapter maps to states.
+
+On Windows, open the plugin file and replace the two constants with absolute
+paths — the default `python3` isn't on `PATH`, and the installer isn't around to
+inline them:
+- `const PYTHON = "python3";` → your Python (`python -c "import sys; print(sys.executable)"`, forward slashes are fine)
+- `const HOOK_SCRIPT = path.join(OPENCODE_HOME, "hooks", "vibemon.py");` → `const HOOK_SCRIPT = "C:/absolute/path/to/hooks/vibemon.py";`
+
+`OPENCODE_CONFIG_DIR` (default `$XDG_CONFIG_HOME/opencode`, falling back to
+`~/.config/opencode`) changes where the plugin
+and adapter are installed; point it at your opencode config home when it isn't
+under `~/.config/opencode`.
+
 ## Token Information
 
 **You can create your own token!** No registration required.
@@ -635,6 +676,7 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 | Codex CLI | codex | install.py or manual |
 | Kiro | kiro | install.py or manual |
 | OpenClaw | claw | install.py or manual |
+| opencode | opencode | install.py or manual |
 
 ## Troubleshooting
 
@@ -667,6 +709,13 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 |-------|----------|
 | Plugin not loading | Check `~/.openclaw/openclaw.json` plugins.entries |
 | Plugin disabled | Set `"enabled": true` in vibemon-bridge config |
+
+### opencode
+| Issue | Solution |
+|-------|----------|
+| Plugin not loading | Verify `$OPENCODE_CONFIG_DIR/plugins/vibemon.js` (default `~/.config/opencode/plugins/vibemon.js`) exists, then restart opencode (plugins are discovered at startup) |
+| Hook not triggering | Check the adapter runs and `~/.vibemon/vibemon_core.py` exists. On Windows confirm the plugin's `PYTHON`/`HOOK_SCRIPT` constants point at your Python and `hooks/vibemon.py` |
+| Permission denied | Run `chmod +x "$OPENCODE_CONFIG_DIR/hooks/vibemon.py"` (default `~/.config/opencode/hooks/vibemon.py`) |
 
 ### Windows
 | Issue | Solution |

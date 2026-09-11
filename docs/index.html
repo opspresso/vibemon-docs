@@ -308,7 +308,7 @@
         <p class="tagline">Real-time AI Status Monitor</p>
         <p class="description">
             Display your AI coding assistant's state on ESP32 devices, Desktop App, or cloud service.
-            See when Claude, Codex, Kiro, or OpenClaw is thinking, working, or done.
+            See when Claude, Codex, Kiro, OpenClaw, or opencode is thinking, working, or done.
         </p>
 
         <a href="https://vibemon.io" class="btn">
@@ -339,7 +339,7 @@
                 </div>
                 <p class="card-note">Download <strong>VibeMon-Setup-x.x.x.exe</strong> from the latest release and run it.</p>
             </div>
-            <p class="card-note">Then open <strong>Settings &gt; AI Tools</strong> to connect Claude Code, Codex, Kiro, or OpenClaw with one click.</p>
+            <p class="card-note">Then open <strong>Settings &gt; AI Tools</strong> to connect Claude Code, Codex, Kiro, OpenClaw, or opencode with one click.</p>
         </div>
 
         <div class="ai-agent-card">
@@ -390,14 +390,14 @@
                 <pre><code>brew tap opspresso/tap
 brew install opspresso/tap/vibemon</code></pre>
                 <p>Or via npm: <code>npx vibemon@latest</code></p>
-                <p>Open the app, go to <strong>Settings &gt; AI Tools</strong>, and click <strong>Install</strong> for Claude Code, Codex CLI, Kiro IDE, or OpenClaw.</p>
-                <p>The installer and Desktop App honor <code>CLAUDE_CONFIG_DIR</code>, <code>CODEX_HOME</code>, and <code>KIRO_HOME</code>. Hook commands are rewritten to the resolved directory, and Kiro is detected through either <code>kiro</code> or <code>kiro-cli</code>.</p>
+<p>Open the app, go to <strong>Settings &gt; AI Tools</strong>, and click <strong>Install</strong> for Claude Code, Codex CLI, Kiro IDE, OpenClaw, or opencode.</p>
+                    <p>The installer and Desktop App honor <code>CLAUDE_CONFIG_DIR</code>, <code>CODEX_HOME</code>, <code>KIRO_HOME</code>, and <code>OPENCODE_CONFIG_DIR</code> (default <code>$XDG_CONFIG_HOME/opencode</code>, falling back to <code>~/.config/opencode</code>). Hook commands are rewritten to the resolved directory, and Kiro is detected through either <code>kiro</code> or <code>kiro-cli</code>.</p>
 
                 <h3>Non-interactive Install (AI agents, CI)</h3>
                 <p>For headless setups where a GUI app isn't available:</p>
                 <pre><code># Choose exactly one platform + your token
 curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_token
-# --codex / --kiro / --openclaw for other tools, --all for every detected tool</code></pre>
+# --codex / --kiro / --openclaw / --opencode for other tools, --all for every detected tool</code></pre>
                 <p>Interactive prompt version:</p>
                 <pre><code>curl -fsSL https://docs.vibemon.io/install.py | python3</code></pre>
                 <p>Or point your AI agent at <a href="./setup.md">docs/setup.md</a> (<code>https://docs.vibemon.io/setup.md</code>) and have it follow the instructions directly.</p>
@@ -438,10 +438,10 @@ python3 docs/install.py</code></pre>
 
                 <p>The reset-countdown fields the hooks attach (<code>usage5hResetsIn</code>/<code>usageWeekResetsIn</code>/<code>usageWeekModelResetsIn</code>) are populated whenever the cache was refreshed via a <code>resets_at</code> epoch — either an active Claude Code session's statusline (the official <code>rate_limits</code> path), <code>usage.py</code>'s direct Anthropic/Codex API queries, or a Codex session log. Only the last-resort <code>claude -p "/usage"</code> text fallback lacks a machine-parseable reset time, so the reset countdown is omitted in that case while the usage percentages still update.</p>
 
-                <p>Note that the plan-usage fields (<code>usage5h</code>/<code>usageWeek</code>/<code>usageWeekModel</code> and their reset countdowns) are sent by the <strong>Claude Code and Codex hooks</strong>, since they both read from the same <code>usage.py</code>-refreshed cache (under separate <code>claude</code>/<code>codex</code> cache keys). The Kiro hook doesn't report usage, and OpenClaw reports context-window usage as <code>memory</code> instead.</p>
+                <p>Note that the plan-usage fields (<code>usage5h</code>/<code>usageWeek</code>/<code>usageWeekModel</code> and their reset countdowns) are sent by the <strong>Claude Code and Codex hooks</strong>, since they both read from the same <code>usage.py</code>-refreshed cache (under separate <code>claude</code>/<code>codex</code> cache keys). The Kiro and opencode hooks don't report usage, and OpenClaw reports context-window usage as <code>memory</code> instead.</p>
 
                 <h3>Codex Configuration</h3>
-                <p>Codex uses the same <code>~/.vibemon/config.json</code> as Claude Code and Kiro. Hooks are enabled by default; the installer preserves an explicit <code>[features].hooks = false</code> in <code>~/.codex/config.toml</code>. Merge <a href="./codex/hooks.json">codex/hooks.json</a> into your existing <code>~/.codex/hooks.json</code> (do not overwrite), then open <code>/hooks</code> and review/trust the new definitions.</p>
+                <p>Codex uses the same <code>~/.vibemon/config.json</code> as Claude Code, Kiro, the OpenClaw plugin, and the opencode plugin. Hooks are enabled by default; the installer preserves an explicit <code>[features].hooks = false</code> in <code>~/.codex/config.toml</code>. Merge <a href="./codex/hooks.json">codex/hooks.json</a> into your existing <code>~/.codex/hooks.json</code> (do not overwrite), then open <code>/hooks</code> and review/trust the new definitions.</p>
 
                 <h3>Kiro Configuration</h3>
                 <p>Kiro IDE 1.x and CLI 3.x discover the global v1 hook at <code>~/.kiro/hooks/vibemon.json</code>. It applies to every local project without selecting a custom agent. The installer removes only VibeMon's legacy agent hooks and <code>.kiro.hook</code> files during migration.</p>
@@ -463,6 +463,10 @@ python3 docs/install.py</code></pre>
 }</code></pre>
                 <p>To override the shared settings for OpenClaw only, add a <code>config</code> object to the entry (<code>projectName</code>, <code>character</code>, <code>httpEnabled</code>, <code>httpUrls</code>, <code>serialEnabled</code>, <code>vibemonUrl</code>, <code>vibemonToken</code>, <code>autoLaunch</code>, <code>debug</code>) — plugin config always wins over <code>~/.vibemon/config.json</code>.</p>
                 <p>After installing or updating the plugin, rebuild OpenClaw's persisted plugin registry and restart the gateway (<code>openclaw plugins registry --refresh &amp;&amp; openclaw gateway restart</code>) — the gateway boots from a registry snapshot and won't pick up the plugin's hooks otherwise. The installer runs the refresh automatically when the <code>openclaw</code> CLI is available.</p>
+
+                <h3>opencode Configuration</h3>
+                <p>The opencode plugin reads transmission settings (<code>http_urls</code>, <code>serial_port</code>, <code>vibemon_url</code>, <code>vibemon_token</code>) from the same <code>~/.vibemon/config.json</code> as the other tools. opencode has no Claude Code-style hooks, so the plugin at <code>~/.config/opencode/plugins/vibemon.js</code> bridges opencode events to VibeMon's hook pipeline: it spawns the adapter at <code>~/.config/opencode/hooks/vibemon.py</code>, which feeds <code>vibemon_core.py</code>. opencode auto-discovers plugins in <code>~/.config/opencode/plugins/</code> at startup, so no config registration is needed — install the plugin file and restart opencode.</p>
+                <p>The installer honors an <code>OPENCODE_CONFIG_DIR</code> override (default <code>$XDG_CONFIG_HOME/opencode</code>, falling back to <code>~/.config/opencode</code>); on Windows it also pins the plugin's interpreter to the Python that ran the installer, since <code>python3</code> isn't on <code>PATH</code> there.</p>
             </section>
 
             <section id="cli">
@@ -567,7 +571,7 @@ echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/ttyACM0</
                     <tbody>
                         <tr><td><code>state</code></td><td>string</td><td>start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required)</td></tr>
                         <tr><td><code>project</code></td><td>string</td><td>Project name (required)</td></tr>
-                        <tr><td><code>character</code></td><td>string</td><td>vibemon, clawd, codex, kiro, claw, or daangni (required; an unrecognized value falls back to vibemon rather than being rejected). daangni is manual selection only (no tool maps to it)</td></tr>
+                        <tr><td><code>character</code></td><td>string</td><td>vibemon, clawd, codex, kiro, claw, opencode, or daangni (required; an unrecognized value falls back to vibemon rather than being rejected). daangni is manual selection only (no tool maps to it)</td></tr>
                         <tr><td><code>tool</code></td><td>string</td><td>Tool name (Bash, Read, Edit, etc.) (optional)</td></tr>
                         <tr><td><code>model</code></td><td>string</td><td>Model name (opus, sonnet, etc.) (optional)</td></tr>
                         <tr><td><code>memory</code></td><td>number</td><td>Context window usage 0-100 (optional)</td></tr>
@@ -652,6 +656,32 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>session_end</code> / <code>gateway_stop</code></td><td>done</td></tr>
                     </tbody>
                 </table>
+
+                <h3>opencode</h3>
+                <table>
+                    <thead><tr><th>Event</th><th>State</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>SessionStart</code></td><td>start</td></tr>
+                        <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
+                        <tr><td><code>PreToolUse</code></td><td>working</td></tr>
+                        <tr><td><code>PostToolUse</code></td><td>thinking</td></tr>
+                        <tr><td><code>PermissionRequest</code></td><td>notification</td></tr>
+                        <tr><td><code>PreCompact</code></td><td>packing</td></tr>
+                        <tr><td><code>Stop</code></td><td>done</td></tr>
+                        <tr><td><code>SessionEnd</code></td><td>done</td></tr>
+                    </tbody>
+                </table>
+                <p>opencode has no Claude Code-style hooks, so the plugin bridges its events to these hook events:</p>
+                <ul>
+                    <li><code>session.created</code> &rarr; SessionStart</li>
+                    <li><code>chat.message</code> &rarr; UserPromptSubmit</li>
+                    <li><code>tool.execute.before</code> &rarr; PreToolUse</li>
+                    <li><code>tool.execute.after</code> &rarr; PostToolUse</li>
+                    <li><code>permission.asked</code> (bus event; legacy <code>permission.ask</code> hook) &rarr; PermissionRequest</li>
+                    <li><code>experimental.session.compacting</code> &rarr; PreCompact</li>
+                    <li><code>session.idle</code> &rarr; Stop</li>
+                    <li><code>session.deleted</code> &rarr; SessionEnd</li>
+                </ul>
             </section>
         </main>
     </div>

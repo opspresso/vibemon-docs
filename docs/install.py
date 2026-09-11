@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 VibeMon Installation Script
-Installs hooks and configuration for Claude Code, Codex, Kiro IDE, or OpenClaw.
+Installs hooks and configuration for Claude Code, Codex, Kiro IDE, OpenClaw, or
+opencode.
 
 Usage (Interactive):
   curl -fsSL https://docs.vibemon.io/install.py | python3
@@ -11,6 +12,7 @@ Usage (Non-interactive for AI agents):
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --codex
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --kiro
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --openclaw
+  curl -fsSL https://docs.vibemon.io/install.py | python3 - --opencode
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token YOUR_TOKEN
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
 
@@ -762,6 +764,21 @@ def tool_home(env_var: str, default_dir: str) -> Path:
     return Path.home() / default_dir
 
 
+def opencode_config_home() -> Path:
+    """Resolve opencode's config home.
+
+    `OPENCODE_CONFIG_DIR` wins; otherwise opencode reads its global config from
+    `$XDG_CONFIG_HOME/opencode` (falling back to `~/.config/opencode`), so the
+    installer writes plugins where opencode will discover them.
+    """
+    configured = os.environ.get("OPENCODE_CONFIG_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    return base / "opencode"
+
+
 def display_path(path: Path) -> str:
     """Render paths under the user's home with a compact ~/ prefix."""
     try:
@@ -863,6 +880,56 @@ def adapt_kiro_hook_config(content: str, kiro_home: Path = None) -> str:
         ])
         changed = True
     return json.dumps(config, indent=2) + "\n" if changed else content
+
+
+def _replace_opencode_line(content: str, prefix: str, replacement: str) -> str:
+    """Replace the single `prefix`-prefixed line in the packaged opencode plugin.
+
+    install.py ships the plugin for the default POSIX home and rewrites it on
+    Windows or a custom OPENCODE_CONFIG_DIR, when absolute paths are required.
+    """
+    lines = content.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[i] = replacement
+            return "\n".join(lines) + "\n"
+    raise RuntimeError(f"Could not find '{prefix}' in the opencode plugin source")
+
+
+def adapt_opencode_plugin(content: str, opencode_home: Path = None) -> str:
+    """Rewrite the packaged opencode plugin for Windows or a custom home.
+
+    Returns `content` untouched for the default POSIX home so the file stays
+    byte-identical to its manifest hash there. opencode spawns the adapter
+    with the interpreter and hook-script paths baked into the plugin, so:
+    * Windows pins the interpreter to the Python running this installer
+      (`python3` is not on PATH there);
+    * a custom OPENCODE_CONFIG_DIR (or Windows) inlines the absolute
+      hook-script path instead of leaving os.homedir() resolution to the
+      plugin.
+    """
+    opencode_home = opencode_home or opencode_config_home()
+    default_home = Path.home() / ".config" / "opencode"
+    if not IS_WINDOWS and opencode_home == default_home:
+        return content
+
+    # Paths go into JavaScript string literals: forward-slash them and
+    # JSON-encode, so a Windows interpreter (`C:\Python...`) isn't read as
+    # backslash escapes and a quote in a custom home can't break parsing.
+    python = hook_path(Path(hook_python())) if IS_WINDOWS else "python3"
+    result = content
+    if IS_WINDOWS:
+        result = _replace_opencode_line(
+            result, "const PYTHON = ",
+            f"const PYTHON = {json.dumps(python)};",
+        )
+    if opencode_home != default_home:
+        script = hook_path(opencode_home / "hooks" / "vibemon.py")
+        result = _replace_opencode_line(
+            result, "const HOOK_SCRIPT = ",
+            f"const HOOK_SCRIPT = path.join({json.dumps(script)});",
+        )
+    return result
 
 
 class FileSource:
@@ -1480,6 +1547,55 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     return True
 
 
+def install_opencode(source: FileSource, cli_token: str = None) -> bool:
+    """Install VibeMon's plugin and hook adapter for opencode."""
+    opencode_home = opencode_config_home()
+    if not is_tool_installed("opencode", opencode_home):
+        print(f"\n{colored('!', 'yellow')} opencode not detected. Skipping installation.")
+        return SKIPPED
+
+    print(f"\n{colored('Installing VibeMon for opencode...', 'cyan')}\n")
+
+    # Shared assets: the adapter reads transmission settings from
+    # ~/.vibemon/config.json through vibemon_core.py, like every other tool.
+    configure_vibemon_config(source, cli_token)
+    ok = install_vibemon_shared(source)
+
+    # opencode auto-discovers plugins in its plugins dir at startup, so no
+    # config registration is needed -- installing the plugin file is enough.
+    (opencode_home / "hooks").mkdir(parents=True, exist_ok=True)
+    (opencode_home / "plugins").mkdir(parents=True, exist_ok=True)
+
+    print("Copying plugin files:")
+
+    content = source.get_file("opencode/hooks/vibemon.py")
+    ok &= write_file_with_diff(
+        opencode_home / "hooks" / "vibemon.py", content,
+        display_path(opencode_home / "hooks" / "vibemon.py"), executable=True,
+    )
+
+    # The plugin spawns the adapter with the interpreter/script baked in; on
+    # Windows (no python3 on PATH) and custom homes the paths are inlined.
+    plugin = adapt_opencode_plugin(source.get_file("opencode/plugin/vibemon.js"), opencode_home)
+    ok &= write_file_with_diff(
+        opencode_home / "plugins" / "vibemon.js", plugin,
+        display_path(opencode_home / "plugins" / "vibemon.js"),
+    )
+    if IS_WINDOWS:
+        print(f"  {colored('✓', 'green')} hook interpreter pinned to {hook_python()}")
+
+    if not ok:
+        print(f"\n{colored('✗ opencode installation finished with errors — some files were not written.', 'red')}")
+        return False
+
+    print(f"\n{colored('opencode installation complete!', 'green')}")
+    print(f"\n{colored('Next steps:', 'yellow')}")
+    print("  1. Restart opencode — the plugin is auto-discovered at startup")
+    hook_path_display = display_path(opencode_home / "hooks" / "vibemon.py")
+    print(f"  2. The plugin bridges events to {hook_path_display}")
+    return True
+
+
 def install_vibemon(source: FileSource, cli_token: str = None) -> bool:
     """Install/repair only the shared ~/.vibemon assets (scripts + config).
 
@@ -1679,6 +1795,26 @@ def uninstall_openclaw(source: FileSource = None, cli_token: str = None) -> bool
     return True
 
 
+def uninstall_opencode(source: FileSource = None, cli_token: str = None) -> bool:
+    """Remove VibeMon's plugin and hook adapter from opencode."""
+    opencode_home = opencode_config_home()
+    if not opencode_home.exists():
+        print(f"\n{colored('!', 'yellow')} opencode not detected. Nothing to remove.")
+        return SKIPPED
+
+    print(f"\n{colored('Removing VibeMon plugin from opencode...', 'cyan')}\n")
+
+    # opencode registers nothing in its config: plugins in the plugins dir are
+    # auto-discovered, so only VibeMon's own files need to be removed.
+    remove_path(opencode_home / "plugins" / "vibemon.js",
+                display_path(opencode_home / "plugins" / "vibemon.js"))
+    remove_path(opencode_home / "hooks" / "vibemon.py",
+                display_path(opencode_home / "hooks" / "vibemon.py"))
+
+    print(f"\n{colored('opencode cleanup complete!', 'green')}")
+    return True
+
+
 def uninstall_vibemon(source: FileSource = None, cli_token: str = None) -> bool:
     """Remove the shared ~/.vibemon scripts, keeping user config."""
     vibemon_home = Path.home() / ".vibemon"
@@ -1703,6 +1839,7 @@ UNINSTALLERS = {
     "codex": ("Codex CLI", uninstall_codex),
     "kiro": ("Kiro IDE", uninstall_kiro),
     "openclaw": ("OpenClaw", uninstall_openclaw),
+    "opencode": ("opencode", uninstall_opencode),
     "vibemon": ("VibeMon Scripts", uninstall_vibemon),
 }
 
@@ -1726,6 +1863,7 @@ Examples:
   Non-interactive (for AI agents):
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --codex
+    curl -fsSL https://docs.vibemon.io/install.py | python3 - --opencode
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_token
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
 
@@ -1752,6 +1890,8 @@ tool isn't installed are reported as skipped and don't affect the status.
                         help="Install for Kiro IDE")
     parser.add_argument("--openclaw", action="store_true",
                         help="Install for OpenClaw")
+    parser.add_argument("--opencode", action="store_true",
+                        help="Install for opencode")
     parser.add_argument("--all", action="store_true",
                         help="Install for all platforms")
     parser.add_argument("--vibemon", action="store_true",
@@ -1763,7 +1903,7 @@ tool isn't installed are reported as skipped and don't affect the status.
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Auto-approve all prompts, including replacing an existing "
                              "statusLine. Does not select a platform by itself; combine with "
-                             "--claude/--codex/--kiro/--openclaw/--all, otherwise the "
+                             "--claude/--codex/--kiro/--openclaw/--opencode/--all, otherwise the "
                              "interactive menu still appears. Without it, an unattended run "
                              "leaves user-owned settings untouched")
     parser.add_argument("--uninstall", action="store_true",
@@ -1794,20 +1934,22 @@ INSTALLERS = {
     "codex": ("Codex CLI", install_codex),
     "kiro": ("Kiro IDE", install_kiro),
     "openclaw": ("OpenClaw", install_openclaw),
+    "opencode": ("opencode", install_opencode),
     "vibemon": ("VibeMon Scripts", install_vibemon),
 }
 
-# --all covers the four tools; the shared ~/.vibemon scripts ride along with
+# --all covers the five tools; the shared ~/.vibemon scripts ride along with
 # each of them, so "vibemon" is only selected explicitly.
-ALL_PLATFORMS = ("claude", "codex", "kiro", "openclaw")
+ALL_PLATFORMS = ("claude", "codex", "kiro", "openclaw", "opencode")
 
 MENU_CHOICES = [
     ("1", "claude", "Claude Code"),
     ("2", "codex", "Codex CLI"),
     ("3", "kiro", "Kiro IDE"),
     ("4", "openclaw", "OpenClaw"),
-    ("5", "all", "All"),
-    ("6", "vibemon", "VibeMon scripts only"),
+    ("5", "opencode", "opencode"),
+    ("6", "all", "All"),
+    ("7", "vibemon", "VibeMon scripts only"),
 ]
 
 
@@ -1815,7 +1957,7 @@ def selected_platforms(args) -> list:
     """Platform keys chosen on the command line, in a stable order."""
     if args.all:
         return list(ALL_PLATFORMS)
-    return [key for key in ("claude", "codex", "kiro", "openclaw", "vibemon")
+    return [key for key in ("claude", "codex", "kiro", "openclaw", "opencode", "vibemon")
             if getattr(args, key)]
 
 
@@ -1838,7 +1980,8 @@ def report_and_exit(results: list, action: str) -> None:
         print(f"\n{colored('✗', 'red')} {action} failed: {', '.join(failed)}\n")
         sys.exit(1)
     if not done:
-        print(f"\n{colored('!', 'yellow')} Nothing was {action.lower()}ed.\n")
+        verb = "uninstalled" if action == "Uninstall" else "installed"
+        print(f"\n{colored('!', 'yellow')} Nothing was {verb}.\n")
         sys.exit(1)
 
     suffix = " Restart your IDE to apply changes." if action == "Install" else ""
@@ -1889,7 +2032,7 @@ def main():
         valid.update({name: name for _, name, _ in MENU_CHOICES})
         while True:
             try:
-                choice = input("\nYour choice [1/2/3/4/5/6/q]: ").strip().lower()
+                choice = input("\nYour choice [1/2/3/4/5/6/7/q]: ").strip().lower()
             except EOFError:
                 print("\nCancelled.")
                 sys.exit(0)
@@ -1900,7 +2043,7 @@ def main():
                 picked = valid[choice]
                 platforms = list(ALL_PLATFORMS) if picked == "all" else [picked]
                 break
-            print("Please enter 1, 2, 3, 4, 5, 6, or q")
+            print("Please enter 1, 2, 3, 4, 5, 6, 7, or q")
 
     # args.token is honored in both modes; it used to be dropped whenever the
     # menu was shown, which then reported "No token configured (use --token)".

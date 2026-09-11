@@ -1,10 +1,12 @@
 import importlib
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "docs" / "vibemon"))
 sys.path.insert(0, str(Path(__file__).parents[1] / "docs" / "claude"))
@@ -28,6 +30,17 @@ class StatuslineCacheTest(unittest.TestCase):
             self.assertEqual(entry["model"], "Fable 5")
             self.assertEqual(entry["memory"], 42)
             self.assertIn("ts", entry)
+
+
+class ReadInputTest(unittest.TestCase):
+    def test_reads_payload_decoded_as_utf8(self):
+        from statusline import read_input
+
+        stdin = io.StringIO('{"model": {"display_name": "Claude 한국"}}')
+        with patch.object(sys, "stdin", stdin):
+            content = read_input()
+
+        self.assertIn('"display_name": "Claude 한국"', content)
 
 
 class UsageSegmentTest(unittest.TestCase):
