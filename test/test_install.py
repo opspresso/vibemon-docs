@@ -212,10 +212,10 @@ class AskYesNoTest(unittest.TestCase):
 class SelectedPlatformsTest(unittest.TestCase):
     class Args:
         def __init__(self, **kw):
-            for key in ("claude", "codex", "kiro", "openclaw", "vibemon", "all"):
+            for key in ("claude", "codex", "kiro", "openclaw", "opencode", "vibemon", "all"):
                 setattr(self, key, kw.get(key, False))
 
-    def test_all_expands_to_the_four_tools(self):
+    def test_all_expands_to_the_five_tools(self):
         self.assertEqual(
             install.selected_platforms(self.Args(all=True)), list(install.ALL_PLATFORMS)
         )
@@ -360,6 +360,9 @@ class VerifyContentTest(unittest.TestCase):
 DOCS_DIR = Path(__file__).parents[1] / "docs"
 CLAUDE_SETTINGS = json.loads((DOCS_DIR / "claude" / "settings.json").read_text(encoding="utf-8"))
 CODEX_HOOKS = json.loads((DOCS_DIR / "codex" / "hooks.json").read_text(encoding="utf-8"))
+OPENCODE_PLUGIN = (DOCS_DIR / "opencode" / "plugin" / "vibemon.js").read_text(
+    encoding="utf-8"
+)
 
 
 class LifecycleConfigTest(unittest.TestCase):
@@ -374,7 +377,25 @@ class LifecycleConfigTest(unittest.TestCase):
             "Kiro IDE": runpy.run_path(
                 str(DOCS_DIR / "kiro" / "hooks" / "vibemon.py")
             )["EVENT_STATE_MAP"],
+            "opencode": runpy.run_path(
+                str(DOCS_DIR / "opencode" / "hooks" / "vibemon.py")
+            )["EVENT_STATE_MAP"],
         }
+
+    @staticmethod
+    def _markdown_section(readme, heading):
+        """Content of the `### {heading}` section, matched on whole lines.
+
+        A substring split would truncate at a longer heading with the same
+        prefix (e.g. `### opencode Configuration` vs `### opencode`).
+        """
+        lines = readme.splitlines()
+        start = next(i for i, line in enumerate(lines) if line == f"### {heading}")
+        end = next(
+            (i for i in range(start + 1, len(lines)) if lines[i].startswith("### ")),
+            len(lines),
+        )
+        return "\n".join(lines[start + 1:end])
 
     def test_claude_config_and_adapter_cover_the_same_lifecycle(self):
         event_map = runpy.run_path(
@@ -416,14 +437,30 @@ class LifecycleConfigTest(unittest.TestCase):
         self.assertEqual(triggers, set(event_map))
         self.assertEqual(event_map["PostToolUse"], "thinking")
 
+    def test_opencode_plugin_bridges_every_adapter_event(self):
+        event_map = runpy.run_path(
+            str(DOCS_DIR / "opencode" / "hooks" / "vibemon.py")
+        )["EVENT_STATE_MAP"]
+        plugin = (DOCS_DIR / "opencode" / "plugin" / "vibemon.js").read_text(
+            encoding="utf-8"
+        )
+        emitted = set(re.findall(r'sendStatus\("([A-Za-z]+)"', plugin))
+        self.assertEqual(emitted, set(event_map))
+        self.assertEqual(event_map["SessionStart"], "start")
+        self.assertEqual(event_map["Stop"], "done")
+        self.assertEqual(event_map["SessionEnd"], "done")
+
     def test_readme_and_html_tables_match_hook_adapters(self):
         readme = (DOCS_DIR.parent / "README.md").read_text(encoding="utf-8")
         index = (DOCS_DIR / "index.html").read_text(encoding="utf-8")
 
         for heading, event_map in self._event_maps().items():
-            markdown_section = readme.split(f"### {heading}", 1)[1].split("\n### ", 1)[0]
             markdown_rows = dict(
-                re.findall(r"^\| ([A-Za-z]+) \| ([a-z]+) \|$", markdown_section, re.M)
+                re.findall(
+                    r"^\| ([A-Za-z]+) \| ([a-z]+) \|$",
+                    self._markdown_section(readme, heading),
+                    re.M,
+                )
             )
             self.assertEqual(markdown_rows, event_map, heading)
 
@@ -458,6 +495,7 @@ class WindowsFake:
             mock.patch.object(install, "has_git_bash", lambda: True),
             mock.patch.dict(os.environ, {
                 "CLAUDE_CONFIG_DIR": "", "CODEX_HOME": "", "KIRO_HOME": "",
+                "OPENCODE_CONFIG_DIR": "",
             }),
         ]
         for patch in self._patches:
@@ -484,6 +522,7 @@ class PosixFake:
             mock.patch.object(install, "IS_WINDOWS", False),
             mock.patch.dict(os.environ, {
                 "CLAUDE_CONFIG_DIR": "", "CODEX_HOME": "", "KIRO_HOME": "",
+                "OPENCODE_CONFIG_DIR": "",
             }),
         ]
         for patch in self._patches:
@@ -699,6 +738,46 @@ class AdaptKiroTest(unittest.TestCase):
             self.assertEqual(install.adapt_kiro_hook_config(other), other)
 
 
+class AdaptOpencodePluginTest(unittest.TestCase):
+    def test_posix_plugin_is_returned_verbatim(self):
+        """The file is hashed in manifest.json, so POSIX must not touch it."""
+        with PosixFake():
+            self.assertEqual(install.adapt_opencode_plugin(OPENCODE_PLUGIN), OPENCODE_PLUGIN)
+
+    def test_windows_pins_the_interpreter(self):
+        with WindowsFake():
+            plugin = install.adapt_opencode_plugin(OPENCODE_PLUGIN)
+        self.assertIn(f'const PYTHON = "{WindowsFake.PYTHON}";', plugin)
+        self.assertNotIn("python3", plugin)
+
+    def test_windows_keeps_the_default_script_variable(self):
+        with WindowsFake():
+            plugin = install.adapt_opencode_plugin(OPENCODE_PLUGIN)
+        # Default home: OPENCODE_HOME already resolves via os.homedir().
+        self.assertIn('const HOOK_SCRIPT = path.join(OPENCODE_HOME, "hooks", "vibemon.py");', plugin)
+
+    def test_windows_with_custom_home_inlines_both(self):
+        with WindowsFake():
+            plugin = install.adapt_opencode_plugin(OPENCODE_PLUGIN, Path("C:/opencode profile"))
+        self.assertIn(f'const PYTHON = "{WindowsFake.PYTHON}";', plugin)
+        self.assertIn('path.join("C:/opencode profile/hooks/vibemon.py")', plugin)
+
+    def test_custom_posix_home_inlines_only_the_script_path(self):
+        with PosixFake():
+            plugin = install.adapt_opencode_plugin(OPENCODE_PLUGIN, Path("/tmp/opencode home"))
+        self.assertIn('const PYTHON = "python3";', plugin)
+        self.assertIn(
+            'const HOOK_SCRIPT = path.join("/tmp/opencode home/hooks/vibemon.py");', plugin
+        )
+        self.assertNotIn("path.join(OPENCODE_HOME,", plugin)
+
+    def test_unknown_plugin_shape_raises(self):
+        with self.assertRaisesRegex(RuntimeError, "Could not find 'const HOOK_SCRIPT"):
+            install._replace_opencode_line(
+                'const PYTHON = "python3";\n', "const HOOK_SCRIPT = ", "replacement"
+            )
+
+
 class LegacyKiroCleanupTest(unittest.TestCase):
     def test_removes_only_vibemon_legacy_hooks(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -789,6 +868,72 @@ class InstallCodexBackupTest(unittest.TestCase):
             self.assertTrue(result)
             self.assertEqual((codex_home / "config.toml.bak").read_text(), original)
             install.BACKED_UP.clear()
+
+
+class InstallOpencodeTest(unittest.TestCase):
+    def _opens_home(self, home):
+        return home / ".config" / "opencode"
+
+    def test_installs_plugin_and_adapter_byte_identical(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            self._opens_home(home).mkdir(parents=True)  # tool detection
+            source = install.FileSource(DOCS_DIR)
+
+            with (
+                PosixFake(),
+                mock.patch.object(install.Path, "home", staticmethod(lambda: home)),
+                mock.patch.object(install.shutil, "which", return_value=None),
+                mock.patch.object(install, "configure_vibemon_config"),
+                mock.patch.object(install, "install_vibemon_shared", return_value=True),
+            ):
+                result = install.install_opencode(source)
+
+            self.assertTrue(result)
+            plugin = self._opens_home(home) / "plugins" / "vibemon.js"
+            hook = self._opens_home(home) / "hooks" / "vibemon.py"
+            self.assertEqual(
+                plugin.read_text(encoding="utf-8"),
+                (DOCS_DIR / "opencode" / "plugin" / "vibemon.js").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                hook.read_text(encoding="utf-8"),
+                (DOCS_DIR / "opencode" / "hooks" / "vibemon.py").read_text(encoding="utf-8"),
+            )
+
+    def test_skips_when_opencode_is_not_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = install.FileSource(DOCS_DIR)
+            with (
+                PosixFake(),
+                mock.patch.object(install.Path, "home", staticmethod(lambda: home)),
+                mock.patch.object(install.shutil, "which", return_value=None),
+            ):
+                result = install.install_opencode(source)
+        self.assertIsNone(result)
+
+
+class UninstallOpencodeTest(unittest.TestCase):
+    def test_removes_only_vibemon_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            opencode_home = home / ".config" / "opencode"
+            (opencode_home / "plugins").mkdir(parents=True)
+            (opencode_home / "hooks").mkdir()
+            (opencode_home / "plugins" / "vibemon.js").write_text("plugin")
+            (opencode_home / "hooks" / "vibemon.py").write_text("hook")
+            (opencode_home / "plugins" / "user.js").write_text("user")
+
+            with (
+                PosixFake(),
+                mock.patch.object(install.Path, "home", staticmethod(lambda: home)),
+            ):
+                self.assertTrue(install.uninstall_opencode())
+
+            self.assertFalse((opencode_home / "plugins" / "vibemon.js").exists())
+            self.assertFalse((opencode_home / "hooks" / "vibemon.py").exists())
+            self.assertTrue((opencode_home / "plugins" / "user.js").exists())
 
 
 class HookIdentityTest(unittest.TestCase):
