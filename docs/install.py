@@ -1572,7 +1572,8 @@ def install_opencode(source: FileSource, cli_token: str = None) -> bool:
     print(f"\n{colored('opencode installation complete!', 'green')}")
     print(f"\n{colored('Next steps:', 'yellow')}")
     print("  1. Restart opencode — the plugin is auto-discovered at startup")
-    print("  2. The plugin bridges events to ~/.config/opencode/hooks/vibemon.py")
+    hook_path_display = display_path(opencode_home / "hooks" / "vibemon.py")
+    print(f"  2. The plugin bridges events to {hook_path_display}")
     return True
 
 
