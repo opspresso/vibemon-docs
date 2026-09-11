@@ -24,7 +24,9 @@ Uninstall:
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
 
 Exit status is 0 only when every selected platform installed cleanly. A
-platform whose tool isn't present is reported as skipped, not as a failure.
+platform whose tool isn't present is reported as skipped and does not fail a
+run where another selected platform succeeded; a run in which nothing
+succeeded exits 1.
 
 Downloaded files are checked against the published manifest.json before they
 are written. install.py cannot verify itself — the Desktop app does that
@@ -1925,8 +1927,9 @@ Examples:
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --all
 
-Exit status is 0 only when every selected platform succeeded. Platforms whose
-tool isn't installed are reported as skipped and don't affect the status.
+Exit status is 0 only when every selected platform succeeded. A platform whose
+tool isn't installed is reported as skipped and does not fail a run where
+another selected platform succeeded; a run in which nothing succeeded exits 1.
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )

@@ -79,7 +79,7 @@ The script will:
 
 The installer honors `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIRO_HOME`, and `OPENCODE_CONFIG_DIR`. When an override is set, files and hook commands use that resolved directory instead of `~/.claude`, `~/.codex`, `~/.kiro`, or `$XDG_CONFIG_HOME/opencode` (falling back to `~/.config/opencode`). Kiro is detected through either `kiro` or `kiro-cli`.
 
-**Exit status:** `0` only when every selected platform succeeded. A tool that isn't installed is reported as *skipped* and doesn't fail the run; a platform that genuinely failed exits `1`, even if others succeeded.
+**Exit status:** `0` only when every selected platform succeeded. A tool that isn't installed is reported as *skipped*; a skip doesn't fail a run where another selected platform succeeded, but a run where nothing succeeded (or a platform that genuinely failed, even if others succeeded) exits `1`.
 
 **That's it!** After installation, restart your IDE to apply changes.
 
@@ -95,7 +95,7 @@ curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --all
 & ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --uninstall --claude
 ```
 
-This removes VibeMon's hook registrations, its status line, and the scripts it installed. Hooks you added yourself are preserved, and a `statusLine` you've since pointed at your own script is left in place. Your settings in `~/.vibemon/config.json` and `~/.vibemon/statusline.json` are kept so a reinstall doesn't lose your token — delete `~/.vibemon` yourself to remove those too.
+This removes VibeMon's hook registrations, its status line, and the scripts it installed for the selected tools. Hooks you added yourself are preserved, and a `statusLine` you've since pointed at your own script is left in place. The shared scripts under `~/.vibemon` (`vibemon_core.py`, `usage.py`, `usage_cache.py`) are only removed by `--uninstall --vibemon` (or menu option 7); a per-tool uninstall such as `--uninstall --all` leaves them in place. Your settings in `~/.vibemon/config.json` and `~/.vibemon/statusline.json` are always kept so a reinstall doesn't lose your token — delete `~/.vibemon` yourself to remove those too.
 
 `~/.codex/config.toml` is left untouched: its `[features] hooks` and `[tui] status_line` entries are generic Codex settings, not VibeMon's.
 

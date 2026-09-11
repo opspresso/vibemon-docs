@@ -161,9 +161,10 @@ The installer honors an `OPENCODE_CONFIG_DIR` override (default `$XDG_CONFIG_HOM
 ## CLI Commands
 
 The hook script supports these commands. `--status` works with every
-monitor target; `--lock`, `--unlock`, `--lock-mode`, and `--reboot` are for
-the ESP32/serial device only — the Desktop app doesn't expose those
-endpoints (use its tray menu / Settings window instead):
+monitor target. `--lock`, `--unlock`, and `--lock-mode` are attempted
+against every configured HTTP target first (a Desktop app that doesn't
+expose the endpoint is skipped) and then over serial; `--reboot` targets
+the ESP32 only and skips the Desktop app:
 
 ```bash
 # Lock monitor to current project
@@ -301,7 +302,7 @@ curl -X POST https://vibemon.io/api/status \
 |-------|------|-------------|
 | `state` | string | start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required) |
 | `project` | string | Project name (required) |
-| `character` | string | vibemon, clawd, codex, kiro, claw, or daangni (required; an unrecognized value falls back to vibemon rather than being rejected). daangni is manual selection only (no tool maps to it) |
+| `character` | string | vibemon, clawd, codex, kiro, claw, opencode, or daangni (required; an unrecognized value falls back to vibemon rather than being rejected). daangni is manual selection only (no tool maps to it) |
 | `tool` | string | Tool name (Bash, Read, Edit, etc.) (optional) |
 | `model` | string | Model name (opus, sonnet, etc.) (optional) |
 | `memory` | number | Context window usage 0-100 (optional) |
