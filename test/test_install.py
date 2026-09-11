@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 import re
@@ -252,6 +253,18 @@ class ReportAndExitTest(unittest.TestCase):
 
     def test_everything_skipped_exits_nonzero(self):
         self.assertEqual(self._exit_code([("Kiro IDE", install.SKIPPED)]), 1)
+
+    def test_uninstall_prints_uninstalled_not_trailing_ed(self):
+        out = io.StringIO()
+        with (
+            mock.patch.object(sys, "stdout", out),
+            self.assertRaises(SystemExit),
+        ):
+            install.report_and_exit([("Kiro IDE", install.SKIPPED)], "Uninstall")
+
+        message = out.getvalue()
+        self.assertIn("Nothing was uninstalled.", message)
+        self.assertNotIn("uninstalleded", message)
 
 
 class WriteTextAtomicTest(unittest.TestCase):

@@ -171,7 +171,17 @@ def detach_stdio() -> None:
 
 
 def read_input() -> str:
-    """Read input from stdin."""
+    """Read input from stdin.
+
+    Claude Code writes UTF-8, but Python decodes stdin with the locale
+    encoding — on a cp949/cp1252 Windows console a non-ASCII prompt or path
+    in the payload would raise UnicodeDecodeError here and the outer backstop
+    would swallow the whole statusline. Mirror the hook adapters' hardening.
+    """
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        pass
     return sys.stdin.read()
 
 

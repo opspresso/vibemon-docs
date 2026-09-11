@@ -164,5 +164,46 @@ class VibemonHomeGuardTest(unittest.TestCase):
         self.assertEqual(sent[0]["state"], "start")
 
 
+class SerialDebounceLockTest(unittest.TestCase):
+    """The debounce coordination must never block the hook on a busy lock:
+    a held debounce lock (e.g. while a peer drives an unresponsive device)
+    used to stall the process on a blocking flock(LOCK_EX) forever.
+    """
+
+    def _send(self, directory, acquire_side_effect):
+        port = Path(directory) / "ttyDevice"
+        port.touch()
+        lock_path = str(Path(directory) / "debounce.lock")
+        sent = []
+        with (
+            patch.object(vibemon_core, "_acquire_lock", side_effect=acquire_side_effect),
+            patch.object(
+                vibemon_core, "_get_serial_debounce_lock_path", return_value=lock_path
+            ),
+            patch.object(vibemon_core.time, "sleep"),
+            patch.object(
+                vibemon_core,
+                "send_serial_raw",
+                side_effect=lambda p, d: sent.append((p, d)) or True,
+            ),
+        ):
+            result = vibemon_core.send_serial(str(port), '{"x":1}')
+        return result, sent
+
+    def test_lock_busy_at_write_falls_back_to_direct_send(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, sent = self._send(directory, [False])
+
+        self.assertTrue(result)
+        self.assertEqual(sent, [(str(Path(directory) / "ttyDevice"), '{"x":1}')])
+
+    def test_relock_busy_at_check_falls_back_to_direct_send(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, sent = self._send(directory, [True, False])
+
+        self.assertTrue(result)
+        self.assertEqual(sent, [(str(Path(directory) / "ttyDevice"), '{"x":1}')])
+
+
 if __name__ == "__main__":
     unittest.main()

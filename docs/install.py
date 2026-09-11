@@ -1961,7 +1961,8 @@ def report_and_exit(results: list, action: str) -> None:
         print(f"\n{colored('✗', 'red')} {action} failed: {', '.join(failed)}\n")
         sys.exit(1)
     if not done:
-        print(f"\n{colored('!', 'yellow')} Nothing was {action.lower()}ed.\n")
+        verb = "uninstalled" if action == "Uninstall" else "installed"
+        print(f"\n{colored('!', 'yellow')} Nothing was {verb}.\n")
         sys.exit(1)
 
     suffix = " Restart your IDE to apply changes." if action == "Install" else ""
