@@ -31,6 +31,27 @@ class StatuslineCacheTest(unittest.TestCase):
             self.assertEqual(entry["memory"], 42)
             self.assertIn("ts", entry)
 
+    def test_save_to_cache_recovers_from_non_dict_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = str(Path(directory) / "projects.json")
+            Path(cache_path).write_text("[]")
+            os.environ["VIBEMON_CACHE_PATH"] = cache_path
+            try:
+                statusline = importlib.import_module("statusline")
+                statusline.save_to_cache("my-project", "Fable 5", 42)
+
+                with open(cache_path) as f:
+                    cache = json.load(f)
+            finally:
+                del os.environ["VIBEMON_CACHE_PATH"]
+
+            self.assertEqual(cache["my-project"]["model"], "Fable 5")
+
+    def test_parse_json_non_object_yields_empty_dict(self):
+        statusline = importlib.import_module("statusline")
+        self.assertEqual(statusline.parse_json("[]"), {})
+        self.assertEqual(statusline.parse_json('{"a": 1}'), {"a": 1})
+
 
 class ReadInputTest(unittest.TestCase):
     def test_reads_payload_decoded_as_utf8(self):

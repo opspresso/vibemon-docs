@@ -94,6 +94,27 @@ class UsageTest(unittest.TestCase):
         self.assertEqual(result["session"], {"pct": 33, "resets_at": 5000.0})
         self.assertEqual(result["week_all"], {"pct": 7, "resets_at": 90000.0})
 
+    def test_claude_live_usage_ignores_non_object_response(self):
+        with (
+            patch.object(usage, "read_claude_token", return_value="token"),
+            patch.object(usage.urllib.request, "urlopen", _fake_urlopen([])),
+        ):
+            self.assertIsNone(usage.fetch_claude_usage_live())
+
+    def test_codex_live_usage_ignores_non_object_response(self):
+        with (
+            patch.object(usage, "read_codex_token", return_value=("token", "account")),
+            patch.object(usage.urllib.request, "urlopen", _fake_urlopen([])),
+        ):
+            self.assertIsNone(usage.fetch_codex_usage_live())
+
+    def test_codex_session_fallback_ignores_non_object_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session_path = Path(directory) / "session.jsonl"
+            session_path.write_text("[]\n")
+            with patch.object(usage, "CODEX_SESSIONS_DIR", directory):
+                self.assertIsNone(usage.get_codex_usage_from_sessions())
+
     def test_codex_windows_are_classified_by_duration(self):
         self.assertEqual(usage._codex_window_kind({"window_minutes": 300}), "session")
         self.assertEqual(usage._codex_window_kind({"window_minutes": 10080}), "week_all")

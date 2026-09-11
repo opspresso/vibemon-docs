@@ -182,6 +182,9 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
         return None
 
+    if not isinstance(data, dict):
+        return None
+
     result: dict[str, Any] = {}
 
     # The limits[] array is the authoritative shape: it carries the session
@@ -294,6 +297,9 @@ def fetch_codex_usage_live() -> dict[str, Any] | None:
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
         return None
 
+    if not isinstance(data, dict):
+        return None
+
     rate_limit = data.get("rate_limit") if isinstance(data.get("rate_limit"), dict) else {}
     # primary_window/secondary_window aren't fixed to 5h/weekly — whichever
     # window is currently active comes back as "primary". Classify by its
@@ -355,6 +361,8 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
                 continue
             payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
             rate_limits = payload.get("rate_limits") if isinstance(payload, dict) else None

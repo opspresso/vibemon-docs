@@ -199,11 +199,18 @@ def read_input() -> str:
 
 
 def parse_json(data: str) -> dict[str, Any]:
-    """Parse JSON string to dictionary."""
+    """Parse JSON string to dictionary.
+
+    Valid JSON that isn't an object (array, scalar, null) is treated as an
+    empty event: callers index the result with .get(), and a host that ever
+    writes a non-object payload must degrade to "no status" rather than
+    raising AttributeError out of the hook.
+    """
     try:
-        return json.loads(data)
+        value = json.loads(data)
     except (json.JSONDecodeError, TypeError):
         return {}
+    return value if isinstance(value, dict) else {}
 
 
 # ============================================================================
@@ -295,10 +302,12 @@ def get_project_metadata(project: str) -> dict[str, Any]:
     try:
         with open(config.cache_path, encoding="utf-8") as f:
             cache = json.load(f)
-        entry = cache.get(project, {})
     except (json.JSONDecodeError, IOError):
         return {}
 
+    if not isinstance(cache, dict):
+        return {}
+    entry = cache.get(project, {})
     if not isinstance(entry, dict):
         return {}
 

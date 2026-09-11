@@ -1,10 +1,10 @@
 {
   "installer": "b83ca3ebb053050534fb852c29e3eec530a4032af49d1fdc120499124f4a65fb",
   "files": {
-    "vibemon/usage.py": "c4318ac20df607480fe1e55cfcbb9375370ab009cbef38e072a42e49f0768920",
+    "vibemon/usage.py": "868dea75c7abdd3b06b900883f2141894cb657bef5ece484931c252087a02248",
     "vibemon/usage_cache.py": "28e23a559d5f9e8910853b88718f0417ef4a664fce0c4a07d2b7aa54ec364322",
-    "vibemon/vibemon_core.py": "f2598c1e77c43b6dd7b735e1f38c504051c181ab22f3692107df488ecef0d959",
-    "claude/statusline.py": "0ca68bf81f0d9832f0fd6ce40447ff14dd0dbc016deda539905a21b288ac0e71",
+    "vibemon/vibemon_core.py": "568039f2d61ce28f67d7436a541ab794a1231e297005a4929fd9e6aa881fc9e3",
+    "claude/statusline.py": "c75439e593f2dfa1b56c565c4ffe3bbfafc591395b8535f86932d6560e7abc30",
     "claude/hooks/vibemon.py": "e91622f83aa6956015a996409e89d5a547c3747c28b14ede78c21b21e6733c80",
     "codex/hooks/vibemon.py": "462c90df2833fa364893f3f14538f8fb1d50d09a0501fdf37a6c0c86d625c193",
     "kiro/hooks/vibemon.py": "d960a16d46b0530b3a0f8fcf7ac056c9cc437a640ea967aa68c6dc80734a26c5",
