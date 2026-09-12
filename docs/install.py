@@ -39,6 +39,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -719,8 +720,10 @@ def hook_path(path: Path) -> str:
     return str(path).replace("\\", "/")
 
 
-def _shell_quote(value: str) -> str:
+def _shell_quote(value: str, windows: bool = None) -> str:
     """Quote a path for a shell-form command, only when it actually needs it."""
+    if not (IS_WINDOWS if windows is None else windows):
+        return shlex.quote(value)
     return f'"{value}"' if " " in value else value
 
 
@@ -762,7 +765,7 @@ def windows_shell_command(python: str, script: str) -> str:
     quoted first token forces a choice: PowerShell needs the call operator `&`
     in front of it, which Git Bash would read as backgrounding the command.
     """
-    command = f"{_shell_quote(python)} {_shell_quote(script)}"
+    command = f"{_shell_quote(python, windows=True)} {_shell_quote(script, windows=True)}"
     if " " in python and not has_git_bash():
         return f"& {command}"
     return command
@@ -828,7 +831,10 @@ def adapt_claude_settings(settings: dict, claude_home: Path = None) -> dict:
 
     status_line = settings.get("statusLine")
     if isinstance(status_line, dict) and "statusline.py" in status_line.get("command", ""):
-        status_line["command"] = windows_shell_command(python, statusline_script)
+        status_line["command"] = (
+            windows_shell_command(python, statusline_script) if IS_WINDOWS
+            else f"{python} {_shell_quote(statusline_script)}"
+        )
 
     return settings
 

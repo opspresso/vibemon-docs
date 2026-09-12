@@ -119,6 +119,42 @@
           }
         ]
       }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "statusLine": {

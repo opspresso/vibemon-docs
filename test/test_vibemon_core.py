@@ -258,6 +258,7 @@ class SuppressedHookTest(unittest.TestCase):
         self.assertEqual(called, ["--status"])
 
 
+@unittest.skipIf(vibemon_core.fcntl is None, "POSIX serial transport")
 class SerialWriteTest(unittest.TestCase):
     def _send(self, write_side_effect):
         with tempfile.TemporaryDirectory() as directory:

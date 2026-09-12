@@ -4,6 +4,7 @@ import json
 import os
 import re
 import runpy
+import shlex
 import sys
 import tempfile
 import unittest
@@ -627,11 +628,11 @@ class AdaptClaudeSettingsTest(unittest.TestCase):
             )
         hook = settings["hooks"]["SessionStart"][0]["hooks"][0]
         self.assertEqual(
-            hook["command"], 'python3 "/tmp/Claude Profile/hooks/vibemon.py"'
+            shlex.split(hook["command"]), ["python3", "/tmp/Claude Profile/hooks/vibemon.py"]
         )
         self.assertEqual(
-            settings["statusLine"]["command"],
-            'python3 "/tmp/Claude Profile/statusline.py"',
+            shlex.split(settings["statusLine"]["command"]),
+            ["python3", "/tmp/Claude Profile/statusline.py"],
         )
 
 
@@ -693,7 +694,7 @@ class AdaptCodexHooksTest(unittest.TestCase):
             )
         hook = hooks["hooks"]["Stop"][0]["hooks"][0]
         self.assertEqual(
-            hook["command"], 'python3 "/tmp/Codex Profile/hooks/vibemon.py"'
+            shlex.split(hook["command"]), ["python3", "/tmp/Codex Profile/hooks/vibemon.py"]
         )
 
 
@@ -747,8 +748,8 @@ class AdaptKiroTest(unittest.TestCase):
                 )
             )
         self.assertEqual(
-            config["hooks"][0]["action"]["command"],
-            'python3 "/tmp/Kiro Profile/hooks/vibemon.py" SessionStart',
+            shlex.split(config["hooks"][0]["action"]["command"]),
+            ["python3", "/tmp/Kiro Profile/hooks/vibemon.py", "SessionStart"],
         )
 
     def test_a_hook_config_without_vibemon_is_left_alone(self):

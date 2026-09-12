@@ -277,6 +277,42 @@ Merge the following into your existing `~/.claude/settings.json`, preserving all
           }
         ]
       }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/vibemon.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
@@ -469,10 +505,25 @@ Merge the following into your existing `~/.codex/hooks.json`:
           }
         ]
       }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/vibemon.py",
+            "statusMessage": "VibeMon: turn interrupted",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }
 ```
+
+`Interrupt` reports a stopped turn as `done`, including when the user cancels
+an active response. Like `SessionEnd`, it has a three-second timeout.
 
 **On Windows**, add a `commandWindows` override beside each `command` — Codex's
 hooks.json takes a Windows-only command string, so the POSIX one stays intact:
@@ -586,6 +637,11 @@ Merge the following into your existing `~/.openclaw/openclaw.json`. OpenClaw doe
 
 Transmission settings (`http_urls`, `serial_port`, `vibemon_url`, `vibemon_token`) are read from the shared `~/.vibemon/config.json` (Step 1). To override them for OpenClaw only, add a `config` object to the entry with `httpEnabled`, `httpUrls`, `serialEnabled`, `vibemonUrl`, or `vibemonToken` — plugin config always wins over the shared file.
 
+OpenClaw serial output uses `python3 ~/.vibemon/vibemon_core.py` to share
+serial configuration and locking with the other agents. HTTP requests have
+a 2.5-second deadline per target. Active runs and tool calls are tracked so
+progress messages and child completions cannot finish another active run.
+
 Finally, rebuild OpenClaw's persisted plugin registry and restart the gateway — the gateway boots from a registry snapshot, and skipping the refresh leaves the plugin loaded but with no hooks running:
 
 ```bash
@@ -614,8 +670,12 @@ No config file to merge: opencode auto-discovers plugins in the
 file in place is enough. Restart opencode after copying the files. The plugin
 bridges opencode events (`session.created`, `chat.message`,
 `tool.execute.before`, `tool.execute.after`, `permission.asked`,
-`experimental.session.compacting`, `session.idle`, `session.deleted`) to
-VibeMon's hook events, which the adapter maps to states.
+`experimental.session.compacting`, `session.compacted`, `session.status`,
+`session.error`, `session.idle`, `session.deleted`) to
+VibeMon's hook events, which the adapter maps to states. Resumed sessions use
+the project instance directory. Known child sessions are suppressed because
+the parent task tool already represents their work. Adapter processes run one
+at a time with a 10-second deadline.
 
 On Windows, open the plugin file and replace the two constants with absolute
 paths — the default `python3` isn't on `PATH`, and the installer isn't around to
