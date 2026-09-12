@@ -212,3 +212,22 @@ def test_real_hook_process_posts_to_local_monitor(tmp_path, tool, character):
 ])
 def test_desktop_detection_uses_the_hostname(url, expected):
     assert core.is_localhost_url(url) is expected
+
+
+@pytest.mark.parametrize("existing", [None, [], "invalid", 42])
+def test_replacing_non_object_hooks_installs_current_definitions(existing):
+    packaged = {"Stop": [{"hooks": [{"type": "command", "command": "python3 vibemon.py"}]}]}
+    result, removed = install.replace_vibemon_hooks(existing, packaged)
+    assert result == packaged
+    assert removed == []
+
+
+@pytest.mark.parametrize("array", [
+    "['model', 'git-branch']",
+    r'["model", "custom\"quoted"]',
+    '["model", "custom]item"]',
+    '["model", # keep this item\n "git-branch"]',
+])
+def test_status_line_preserves_toml_values_it_cannot_safely_rebuild(array):
+    config = f'[tui]\nstatus_line = {array}\n[features]\nhooks = true\n'
+    assert install.ensure_codex_status_line(config) == config

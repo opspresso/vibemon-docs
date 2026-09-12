@@ -679,6 +679,8 @@ def replace_vibemon_hooks(existing: dict, new_hooks: dict) -> tuple[dict, list]:
     the same. Removing only VibeMon entries before merging ensures those
     fields are refreshed without touching neighboring user configuration.
     """
+    if not isinstance(existing, dict):
+        existing = {}
     replaced = strip_all_vibemon_hooks(existing)
     return merge_hooks(existing, new_hooks), replaced
 
@@ -1221,6 +1223,15 @@ def ensure_codex_status_line(config_text: str) -> str:
         # TOML — a duplicate key or an unterminated element.
         status_line_match = re.search(r"(?ms)^status_line\s*=\s*\[(.*?)\]", section)
         if status_line_match:
+            # Only rebuild plain basic-string arrays. Literal strings, escapes,
+            # comments and brackets inside strings require a TOML parser; keep
+            # that user configuration intact instead of extracting partial values.
+            if not re.fullmatch(
+                r'\s*(?:"[^"\\\n]*"\s*(?:,\s*"[^"\\\n]*"\s*)*,?\s*)?',
+                status_line_match.group(1),
+            ):
+                print("  Warning: preserving unsupported Codex status_line syntax")
+                return config_text
             existing_items = re.findall(r'"([^"]+)"', status_line_match.group(1))
             missing_items = [
                 item for item in CODEX_STATUS_LINE_ITEMS if item not in existing_items
