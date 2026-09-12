@@ -45,6 +45,7 @@ EVENT_STATE_MAP: dict[str, str] = {
     "PostToolUse": "thinking",
     "PermissionRequest": "notification",
     "PreCompact": "packing",
+    "PostCompact": "thinking",
     "Stop": "done",
     "SessionEnd": "done",
 }
@@ -53,17 +54,14 @@ EVENT_STATE_MAP: dict[str, str] = {
 def build_payload(
     state: str, tool: str, project: str, data: dict[str, Any]
 ) -> dict[str, Any]:
-    """Build payload dict for sending to monitor. opencode includes the
-    active model in the hook payload; the statusline cache is only a
-    fallback. opencode does not report usage, so memory stays 0."""
-    metadata = core.get_project_metadata(project)
+    """Build payload from opencode's model; plan usage is unavailable."""
     model_name = data.get("model", "")
 
     return {
         "state": state,
         "tool": tool,
         "project": project,
-        "model": model_name or metadata.get("model", ""),
+        "model": model_name if isinstance(model_name, str) else "",
         "memory": 0,
         "character": CHARACTER,
         "terminalId": core.get_terminal_id(),

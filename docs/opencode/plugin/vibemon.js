@@ -15,7 +15,9 @@
  *   permission.asked                -> PermissionRequest  -> notification
  *   permission.ask (legacy)         -> PermissionRequest  -> notification
  *   experimental.session.compacting -> PreCompact         -> packing
- *   session.idle                    -> Stop               -> done
+ *   session.compacted               -> PostCompact        -> thinking
+ *   session.status (busy/retry)     -> UserPromptSubmit   -> thinking
+ *   session.idle / session.error    -> Stop               -> done
  *   session.deleted                 -> SessionEnd         -> done
  *
  * opencode auto-discovers plugins in ~/.config/opencode/plugins/ at startup,
@@ -32,15 +34,13 @@ const OPENCODE_HOME = path.join(os.homedir(), ".config", "opencode");
 const HOOK_SCRIPT = path.join(OPENCODE_HOME, "hooks", "vibemon.py");
 const PYTHON = "python3";
 
-// Cap concurrent adapter processes. Each bridged event spawns a Python that
-// may take seconds (HTTP/serial timeout), so a burst of tool events could
-// otherwise pile up unbounded children. When the cap is reached only the
-// newest payload is kept and sent once a slot frees.
-const MAX_ACTIVE_CHILDREN = 8;
+// Serialize adapter children and bound both the backlog and each child's
+// lifetime, so a stalled transport cannot stop subsequent state updates.
+const MAX_QUEUED_PAYLOADS = 32;
+const ADAPTER_TIMEOUT_MS = 10000;
 
-const sessions = new Map();
-let activeChildren = 0;
-let pendingPayload = null;
+const payloadQueue = [];
+let draining = false;
 
 function modelName(model) {
   if (!model) return "";
@@ -50,54 +50,42 @@ function modelName(model) {
   return "";
 }
 
-function sessionDirectory(props) {
-  const info = props && props.info;
-  if (info && typeof info.directory === "string") return info.directory;
-  return "";
-}
-
-// Fire-and-forget: write the same payload opencode's other hooks produce and
-// let the adapter process it. Never await, so the bridge cannot block opencode.
-function sendStatus(eventName, extra = {}) {
-  const payload = {
-    hook_event_name: eventName,
-    tool_name: extra.tool || "",
-    cwd: extra.cwd || "",
-    transcript_path: "",
-    permission_mode: "default",
-    model: extra.model || "",
-    memory: 0,
-  };
-  dispatch(payload);
-}
-
 function dispatch(payload) {
-  if (activeChildren >= MAX_ACTIVE_CHILDREN) {
-    // Coalesce a burst into the latest payload; it is sent when a slot frees.
-    pendingPayload = payload;
-    return;
+  const pending = payloadQueue.findIndex((entry) =>
+    entry.session_id === payload.session_id && entry.cwd === payload.cwd);
+  if (pending !== -1) payloadQueue.splice(pending, 1);
+  payloadQueue.push(payload);
+  if (payloadQueue.length > MAX_QUEUED_PAYLOADS) {
+    // Drop the oldest, not the newest: the latest state must still be sent.
+    payloadQueue.shift();
   }
-  spawnAdapter(payload);
+  drain();
+}
+
+function drain() {
+  if (draining) return;
+  const next = payloadQueue.shift();
+  if (next === undefined) return;
+  draining = true;
+  spawnAdapter(next);
 }
 
 function spawnAdapter(payload) {
-  activeChildren += 1;
   let settled = false;
   const settle = () => {
     if (settled) return;
     settled = true;
-    activeChildren -= 1;
-    if (pendingPayload !== null) {
-      const next = pendingPayload;
-      pendingPayload = null;
-      spawnAdapter(next);
-    }
+    draining = false;
+    drain();
   };
 
   let child;
   try {
     child = spawn(PYTHON, [HOOK_SCRIPT], {
       stdio: ["pipe", "ignore", "ignore"],
+      windowsHide: true,
+      timeout: ADAPTER_TIMEOUT_MS,
+      killSignal: "SIGKILL",
     });
   } catch {
     settle();
@@ -105,7 +93,7 @@ function spawnAdapter(payload) {
   }
 
   child.on("error", settle);
-  child.on("exit", settle);
+  child.on("close", settle);
   child.stdin.on("error", () => {});
   try {
     child.stdin.write(JSON.stringify(payload));
@@ -117,34 +105,83 @@ function spawnAdapter(payload) {
 }
 
 export const vibemon = async ({ directory, worktree }) => {
+  // OpenCode initializes a plugin for each project instance in one server.
+  // Session metadata must not leak between those instances.
+  const sessions = new Map();
   const defaultDir =
     (typeof directory === "string" && directory) ||
     (typeof worktree === "string" && worktree) ||
     process.cwd();
 
+  function context(sessionID) {
+    if (!sessions.has(sessionID)) {
+      sessions.set(sessionID, { directory: defaultDir });
+    }
+    return sessions.get(sessionID);
+  }
+
+  function sendStatus(eventName, input = {}) {
+    const ctx = context(input.sessionID);
+    // The parent's task tool already represents subagent work. A child's
+    // idle/deleted event must not mark the still-running parent as done.
+    if (ctx.parentID) return;
+    if (eventName === "Stop" && ctx.lastEvent === "Stop") return;
+    ctx.lastEvent = eventName;
+    dispatch({
+      hook_event_name: eventName,
+      session_id: input.sessionID || "",
+      tool_name: typeof input.tool === "string" ? input.tool : "",
+      cwd: ctx.directory || defaultDir,
+      transcript_path: "",
+      permission_mode: ctx.agent === "plan" ? "plan" : "default",
+      model: ctx.model || "",
+      memory: 0,
+    });
+  }
+
   return {
     event: async ({ event }) => {
       try {
+        if (!["session.created", "session.updated", "session.status", "session.error",
+          "session.idle", "session.deleted", "session.compacted", "permission.asked"].includes(event?.type)) return;
         const props = (event && event.properties) || {};
         const sessionID =
           props.sessionID || (props.info && props.info.id) || "";
-        const ctx = sessions.get(sessionID) || {};
+        const ctx = context(sessionID);
+        if (event.type === "session.deleted" && props.info?.parentID) {
+          ctx.parentID = props.info.parentID;
+        }
 
         switch (event.type) {
-          case "session.created": {
-            const dir = sessionDirectory(props) || ctx.directory || defaultDir;
-            const model = modelName(props.info && props.info.model) || ctx.model;
-            sessions.set(sessionID, { directory: dir, model });
-            sendStatus("SessionStart", { cwd: dir, model });
+          case "session.created":
+          case "session.updated": {
+            const info = props.info || {};
+            if (typeof info.directory === "string" && info.directory) ctx.directory = info.directory;
+            ctx.parentID = info.parentID || ctx.parentID;
+            ctx.model = modelName(info.model) || ctx.model;
+            if (event.type === "session.created") sendStatus("SessionStart", { sessionID });
             break;
           }
+          case "session.status": {
+            const status = props.status?.type;
+            if (status === "idle") sendStatus("Stop", { sessionID });
+            else if (status === "busy" || status === "retry") {
+              sendStatus("UserPromptSubmit", { sessionID });
+            }
+            break;
+          }
+          case "session.error":
           case "session.idle": {
-            sendStatus("Stop", { cwd: ctx.directory, model: ctx.model });
+            if (sessionID) sendStatus("Stop", { sessionID });
             break;
           }
           case "session.deleted": {
-            sendStatus("SessionEnd", { cwd: ctx.directory, model: ctx.model });
+            sendStatus("SessionEnd", { sessionID });
             sessions.delete(sessionID);
+            break;
+          }
+          case "session.compacted": {
+            sendStatus("PostCompact", { sessionID });
             break;
           }
           case "permission.asked": {
@@ -152,9 +189,8 @@ export const vibemon = async ({ directory, worktree }) => {
             // (`permission.asked`); the `permission.ask` hook below is only
             // triggered by older versions.
             sendStatus("PermissionRequest", {
-              cwd: ctx.directory,
-              tool: typeof props.type === "string" ? props.type : "",
-              model: ctx.model,
+              sessionID,
+              tool: props.permission,
             });
             break;
           }
@@ -164,13 +200,12 @@ export const vibemon = async ({ directory, worktree }) => {
       }
     },
 
-    "chat.message": async (input = {}) => {
+    "chat.message": async (input = {}, output = {}) => {
       try {
-        const ctx = sessions.get(input.sessionID) || {};
-        const model = modelName(input.model) || ctx.model;
-        const dir = ctx.directory || defaultDir;
-        sessions.set(input.sessionID, { directory: dir, model });
-        sendStatus("UserPromptSubmit", { cwd: dir, model });
+        const ctx = context(input.sessionID);
+        ctx.model = modelName(input.model) || modelName(output.message?.model) || ctx.model;
+        ctx.agent = input.agent || output.message?.agent || ctx.agent;
+        sendStatus("UserPromptSubmit", input);
       } catch {
         // Never let a bridge failure affect opencode.
       }
@@ -178,12 +213,7 @@ export const vibemon = async ({ directory, worktree }) => {
 
     "tool.execute.before": async (input = {}) => {
       try {
-        const ctx = sessions.get(input.sessionID) || {};
-        sendStatus("PreToolUse", {
-          cwd: ctx.directory,
-          tool: typeof input.tool === "string" ? input.tool : "",
-          model: ctx.model,
-        });
+        sendStatus("PreToolUse", input);
       } catch {
         // Never let a bridge failure affect opencode.
       }
@@ -191,12 +221,7 @@ export const vibemon = async ({ directory, worktree }) => {
 
     "tool.execute.after": async (input = {}) => {
       try {
-        const ctx = sessions.get(input.sessionID) || {};
-        sendStatus("PostToolUse", {
-          cwd: ctx.directory,
-          tool: typeof input.tool === "string" ? input.tool : "",
-          model: ctx.model,
-        });
+        sendStatus("PostToolUse", input);
       } catch {
         // Never let a bridge failure affect opencode.
       }
@@ -204,11 +229,9 @@ export const vibemon = async ({ directory, worktree }) => {
 
     "permission.ask": async (input = {}) => {
       try {
-        const ctx = sessions.get(input.sessionID) || {};
         sendStatus("PermissionRequest", {
-          cwd: ctx.directory,
-          tool: typeof input.type === "string" ? input.type : "",
-          model: ctx.model,
+          sessionID: input.sessionID,
+          tool: input.type,
         });
       } catch {
         // Never let a bridge failure affect opencode.
@@ -217,11 +240,7 @@ export const vibemon = async ({ directory, worktree }) => {
 
     "experimental.session.compacting": async (input = {}) => {
       try {
-        const ctx = sessions.get(input.sessionID) || {};
-        sendStatus("PreCompact", {
-          cwd: ctx.directory,
-          model: ctx.model,
-        });
+        sendStatus("PreCompact", input);
       } catch {
         // Never let a bridge failure affect opencode.
       }

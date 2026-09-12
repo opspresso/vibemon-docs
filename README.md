@@ -161,9 +161,10 @@ The installer honors an `OPENCODE_CONFIG_DIR` override (default `$XDG_CONFIG_HOM
 ## CLI Commands
 
 The hook script supports these commands. `--status` works with every
-monitor target; `--lock`, `--unlock`, `--lock-mode`, and `--reboot` are for
-the ESP32/serial device only — the Desktop app doesn't expose those
-endpoints (use its tray menu / Settings window instead):
+monitor target. `--lock`, `--unlock`, and `--lock-mode` are attempted
+against every configured HTTP target first (a Desktop app that doesn't
+expose the endpoint is skipped) and then over serial; `--reboot` targets
+the ESP32 only and skips the Desktop app:
 
 ```bash
 # Lock monitor to current project
@@ -301,7 +302,7 @@ curl -X POST https://vibemon.io/api/status \
 |-------|------|-------------|
 | `state` | string | start, idle, thinking, planning, working, packing, notification, done, sleep, alert (required) |
 | `project` | string | Project name (required) |
-| `character` | string | vibemon, clawd, codex, kiro, claw, or daangni (required; an unrecognized value falls back to vibemon rather than being rejected). daangni is manual selection only (no tool maps to it) |
+| `character` | string | vibemon, clawd, codex, kiro, claw, opencode, or daangni (required; an unrecognized value falls back to vibemon rather than being rejected). daangni is manual selection only (no tool maps to it) |
 | `tool` | string | Tool name (Bash, Read, Edit, etc.) (optional) |
 | `model` | string | Model name (opus, sonnet, etc.) (optional) |
 | `memory` | number | Context window usage 0-100 (optional) |
@@ -335,12 +336,15 @@ State reporting is edge-driven: a new state start replaces the previous state. C
 | UserPromptSubmit | thinking |
 | PreToolUse | working |
 | PostToolUse | thinking |
+| PostToolUseFailure | thinking |
+| PermissionDenied | thinking |
 | PreCompact | packing |
 | PostCompact | thinking |
 | Notification | notification |
 | PermissionRequest | notification |
 | SessionEnd | done |
 | Stop | done |
+| StopFailure | done |
 
 **Plan Mode**: When Claude Code is in plan mode, `thinking` and `working` states automatically become `planning`.
 
@@ -356,9 +360,10 @@ State reporting is edge-driven: a new state start replaces the previous state. C
 | PreCompact | packing |
 | PostCompact | thinking |
 | Stop | done |
+| Interrupt | done |
 | SessionEnd | done |
 
-`SessionStart` covers startup, resume, and clear. `PreToolUse`, `PostToolUse`, and `PermissionRequest` are registered without a matcher, so every supported local tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools, and other local function tools) is observed. Informational hooks run in the background, while `SessionEnd` runs synchronously with Codex's three-second maximum timeout.
+`SessionStart` covers startup, resume, and clear. `PreToolUse`, `PostToolUse`, and `PermissionRequest` are registered without a matcher, so every supported local tool call (`Bash`, `apply_patch`/`Edit`/`Write`, MCP tools, and other local function tools) is observed. Informational hooks run in the background, while `SessionEnd` and `Interrupt` run synchronously with Codex's three-second maximum timeout. `done` indicates that activity ended, including cancellation or failure; it does not assert task success.
 
 ### Kiro IDE
 
@@ -377,9 +382,14 @@ State reporting is edge-driven: a new state start replaces the previous state. C
 | gateway_start | start |
 | before_agent_run (fallback: before_agent_start) | thinking |
 | before_tool_call | working |
+| after_tool_call (success or failure) | thinking (working while another tool runs) |
+| before_compaction / after_compaction | packing / thinking |
 | subagent_spawned | working |
-| message_sent / agent_end | done (3s delay) |
+| agent_end (success or failure) | done (3s delay, after all runs finish) |
+| message_sent | done fallback (only with no active run) |
 | session_end / gateway_stop | done |
+
+OpenClaw reads the active model and context usage from `llm_output`, resets them per run, and tracks parallel runs and tools. USB writes use the shared Python transport and file lock; each HTTP target serializes updates, coalesces pending states, and has a 2.5-second request deadline.
 
 ### opencode
 
@@ -391,6 +401,7 @@ State reporting is edge-driven: a new state start replaces the previous state. C
 | PostToolUse | thinking |
 | PermissionRequest | notification |
 | PreCompact | packing |
+| PostCompact | thinking |
 | Stop | done |
 | SessionEnd | done |
 
@@ -402,8 +413,12 @@ opencode has no Claude Code-style hooks, so the plugin bridges its events to the
 - `tool.execute.after` → PostToolUse
 - `permission.asked` (bus event; legacy `permission.ask` hook) → PermissionRequest
 - `experimental.session.compacting` → PreCompact
-- `session.idle` → Stop
+- `session.compacted` → PostCompact
+- `session.status` (`busy`/`retry`) → UserPromptSubmit
+- `session.idle`, `session.status` (`idle`), or `session.error` → Stop
 - `session.deleted` → SessionEnd
+
+Resumed OpenCode sessions use the project instance directory and resolved chat model. Known child sessions do not publish independent status because the parent task tool represents them. Each adapter process has a 10-second deadline so a stalled child cannot stop the queue.
 
 ## Related Projects
 

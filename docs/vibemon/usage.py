@@ -83,18 +83,22 @@ CODEX_WEEK_MAX_SECONDS = 8 * 86400
 def get_usage_cache_path() -> str:
     """Resolve the usage cache path next to the shared projects cache.
 
-    Honors the cache_path setting in ~/.vibemon/config.json so every VibeMon
-    component agrees on where the cache directory lives.
+    `VIBEMON_CACHE_PATH` wins when set, matching how the hooks
+    (vibemon_core.get_config) and statusline.py resolve the same path; the
+    cache_path setting in ~/.vibemon/config.json is the fallback so every
+    VibeMon component agrees on where the cache directory lives.
     """
-    cache_path = "~/.vibemon/cache/projects.json"
-    config_file = os.path.expanduser("~/.vibemon/config.json")
-    try:
-        with open(config_file, encoding="utf-8") as f:
-            config = json.load(f)
-        if isinstance(config, dict) and config.get("cache_path"):
-            cache_path = str(config["cache_path"])
-    except (FileNotFoundError, json.JSONDecodeError, IOError):
-        pass
+    cache_path = os.environ.get("VIBEMON_CACHE_PATH", "").strip()
+    if not cache_path:
+        cache_path = "~/.vibemon/cache/projects.json"
+        config_file = os.path.expanduser("~/.vibemon/config.json")
+        try:
+            with open(config_file, encoding="utf-8") as f:
+                config = json.load(f)
+            if isinstance(config, dict) and config.get("cache_path"):
+                cache_path = str(config["cache_path"])
+        except (FileNotFoundError, json.JSONDecodeError, IOError):
+            pass
     cache_dir = os.path.dirname(os.path.expanduser(cache_path))
     return os.path.join(cache_dir, "usage.json")
 
@@ -180,6 +184,9 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
         with urllib.request.urlopen(request, timeout=CLAUDE_API_TIMEOUT_SECONDS) as resp:
             data = json.loads(resp.read())
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(data, dict):
         return None
 
     result: dict[str, Any] = {}
@@ -294,6 +301,9 @@ def fetch_codex_usage_live() -> dict[str, Any] | None:
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
         return None
 
+    if not isinstance(data, dict):
+        return None
+
     rate_limit = data.get("rate_limit") if isinstance(data.get("rate_limit"), dict) else {}
     # primary_window/secondary_window aren't fixed to 5h/weekly — whichever
     # window is currently active comes back as "primary". Classify by its
@@ -355,6 +365,8 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
                 continue
             payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
             rate_limits = payload.get("rate_limits") if isinstance(payload, dict) else None
@@ -442,6 +454,9 @@ def refresh_usage(providers: set[str] | None = None) -> str:
                     text=True,
                     timeout=CLAUDE_TIMEOUT_SECONDS,
                     creationflags=NO_WINDOW_FLAGS,
+                    # This subprocess is a real Claude Code session; without the
+                    # flag its installed hooks would report a phantom project.
+                    env={**os.environ, "VIBEMON_SUPPRESS_HOOKS": "1"},
                 )
                 claude_usage = parse_usage_output(result.stdout) or None
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError):

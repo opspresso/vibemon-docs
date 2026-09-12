@@ -604,12 +604,15 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>UserPromptSubmit</code></td><td>thinking</td></tr>
                         <tr><td><code>PreToolUse</code></td><td>working</td></tr>
                         <tr><td><code>PostToolUse</code></td><td>thinking</td></tr>
+                        <tr><td><code>PostToolUseFailure</code></td><td>thinking</td></tr>
+                        <tr><td><code>PermissionDenied</code></td><td>thinking</td></tr>
                         <tr><td><code>PreCompact</code></td><td>packing</td></tr>
                         <tr><td><code>PostCompact</code></td><td>thinking</td></tr>
                         <tr><td><code>Notification</code></td><td>notification</td></tr>
                         <tr><td><code>PermissionRequest</code></td><td>notification</td></tr>
                         <tr><td><code>SessionEnd</code></td><td>done</td></tr>
                         <tr><td><code>Stop</code></td><td>done</td></tr>
+                        <tr><td><code>StopFailure</code></td><td>done</td></tr>
                     </tbody>
                 </table>
                 <p>Plan Mode: when Claude Code is in plan mode, <code>thinking</code> and <code>working</code> states automatically become <code>planning</code>.</p>
@@ -626,10 +629,11 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>PreCompact</code></td><td>packing</td></tr>
                         <tr><td><code>PostCompact</code></td><td>thinking</td></tr>
                         <tr><td><code>Stop</code></td><td>done</td></tr>
+                        <tr><td><code>Interrupt</code></td><td>done</td></tr>
                         <tr><td><code>SessionEnd</code></td><td>done</td></tr>
                     </tbody>
                 </table>
-                <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>SessionStart</code> covers startup, resume, and clear. Matcher-free <code>PreToolUse</code>/<code>PostToolUse</code> hooks observe every supported local tool call. Informational hooks run in the background; <code>SessionEnd</code> runs synchronously.</p>
+                <p style="font-size:0.85em;color:var(--text-secondary,#888);margin-top:0.5rem;"><code>SessionStart</code> covers startup, resume, and clear. Matcher-free <code>PreToolUse</code>/<code>PostToolUse</code> hooks observe every supported local tool call. Informational hooks run in the background; <code>SessionEnd</code> and <code>Interrupt</code> run synchronously with a three-second timeout.</p>
                 <p>After installation, open <code>/hooks</code> and review/trust new or changed VibeMon hook definitions.</p>
 
                 <h3>Kiro IDE</h3>
@@ -651,8 +655,11 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>gateway_start</code></td><td>start</td></tr>
                         <tr><td><code>before_agent_run</code> (fallback: <code>before_agent_start</code>)</td><td>thinking</td></tr>
                         <tr><td><code>before_tool_call</code></td><td>working</td></tr>
+                        <tr><td><code>after_tool_call</code></td><td>thinking (working while another tool runs)</td></tr>
+                        <tr><td><code>before_compaction</code> / <code>after_compaction</code></td><td>packing / thinking</td></tr>
                         <tr><td><code>subagent_spawned</code></td><td>working</td></tr>
-                        <tr><td><code>message_sent</code> / <code>agent_end</code></td><td>done (3s delay)</td></tr>
+                        <tr><td><code>agent_end</code> (success or failure)</td><td>done (3s delay, after all runs finish)</td></tr>
+                        <tr><td><code>message_sent</code></td><td>done fallback (only with no active run)</td></tr>
                         <tr><td><code>session_end</code> / <code>gateway_stop</code></td><td>done</td></tr>
                     </tbody>
                 </table>
@@ -667,6 +674,7 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                         <tr><td><code>PostToolUse</code></td><td>thinking</td></tr>
                         <tr><td><code>PermissionRequest</code></td><td>notification</td></tr>
                         <tr><td><code>PreCompact</code></td><td>packing</td></tr>
+                        <tr><td><code>PostCompact</code></td><td>thinking</td></tr>
                         <tr><td><code>Stop</code></td><td>done</td></tr>
                         <tr><td><code>SessionEnd</code></td><td>done</td></tr>
                     </tbody>
@@ -679,7 +687,9 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
                     <li><code>tool.execute.after</code> &rarr; PostToolUse</li>
                     <li><code>permission.asked</code> (bus event; legacy <code>permission.ask</code> hook) &rarr; PermissionRequest</li>
                     <li><code>experimental.session.compacting</code> &rarr; PreCompact</li>
-                    <li><code>session.idle</code> &rarr; Stop</li>
+                    <li><code>session.compacted</code> &rarr; PostCompact</li>
+                    <li><code>session.status</code> (busy/retry) &rarr; UserPromptSubmit</li>
+                    <li><code>session.idle</code>, <code>session.status</code> (idle), or <code>session.error</code> &rarr; Stop</li>
                     <li><code>session.deleted</code> &rarr; SessionEnd</li>
                 </ul>
             </section>

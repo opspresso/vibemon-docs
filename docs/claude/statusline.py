@@ -186,11 +186,12 @@ def read_input() -> str:
 
 
 def parse_json(data: str) -> dict[str, Any]:
-    """Parse JSON string to dictionary."""
+    """Parse JSON string to dictionary (non-object JSON yields {})."""
     try:
-        return json.loads(data)
+        value = json.loads(data)
     except (json.JSONDecodeError, TypeError):
         return {}
+    return value if isinstance(value, dict) else {}
 
 
 # ============================================================================
@@ -444,6 +445,8 @@ def save_to_cache(project: str, model: str, memory: int) -> None:
                 with open(cache_path, encoding="utf-8") as f:
                     cache = json.load(f)
             except (json.JSONDecodeError, IOError):
+                cache = {}
+            if not isinstance(cache, dict):
                 cache = {}
 
         # If new project and cache is full, remove oldest to make room

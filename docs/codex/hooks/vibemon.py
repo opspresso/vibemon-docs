@@ -45,6 +45,7 @@ EVENT_STATE_MAP: dict[str, str] = {
     "PreCompact": "packing",
     "PostCompact": "thinking",
     "Stop": "done",
+    "Interrupt": "done",
     "SessionEnd": "done",
 }
 
@@ -52,9 +53,7 @@ EVENT_STATE_MAP: dict[str, str] = {
 def build_payload(
     state: str, tool: str, project: str, data: dict[str, Any]
 ) -> dict[str, Any]:
-    """Build payload dict for sending to monitor. Codex includes the active
-    model in the hook payload; the statusline cache is only a fallback."""
-    metadata = core.get_project_metadata(project)
+    """Build payload from Codex's own model and usage data."""
     usage = core.get_codex_usage_metadata()
     model_name = data.get("model", "")
     memory = core.get_codex_context_usage(data)
@@ -63,7 +62,7 @@ def build_payload(
         "state": state,
         "tool": tool,
         "project": project,
-        "model": model_name or metadata.get("model", ""),
+        "model": model_name if isinstance(model_name, str) else "",
         "memory": memory,
         "character": CHARACTER,
         "terminalId": core.get_terminal_id(),

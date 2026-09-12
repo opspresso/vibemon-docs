@@ -24,7 +24,9 @@ Uninstall:
   curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
 
 Exit status is 0 only when every selected platform installed cleanly. A
-platform whose tool isn't present is reported as skipped, not as a failure.
+platform whose tool isn't present is reported as skipped and does not fail a
+run where another selected platform succeeded; a run in which nothing
+succeeded exits 1.
 
 Downloaded files are checked against the published manifest.json before they
 are written. install.py cannot verify itself — the Desktop app does that
@@ -37,6 +39,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -365,7 +368,11 @@ def download_file(url: str) -> str:
     try:
         with urlopen(url, timeout=30) as response:
             return response.read().decode("utf-8")
-    except URLError as e:
+    except (URLError, OSError) as e:
+        # URLError is an OSError subclass, but a stalled read raises the bare
+        # OSError/TimeoutError, which an URLError-only catch would let escape
+        # out of load_manifest() — contradicting its "missing manifest is a
+        # warning" contract.
         raise RuntimeError(f"Failed to download {url}: {e}")
 
 
@@ -525,7 +532,7 @@ def get_hook_identities(hook_entries: list) -> set:
     identities = set()
     for entry in hook_entries:
         hooks = entry.get("hooks") if "hooks" in entry else [entry]
-        for hook in hooks:
+        for hook in hooks or []:
             identity = _hook_identity(hook)
             if identity:
                 identities.add(identity)
@@ -536,7 +543,7 @@ def filter_new_hooks(entry: dict, existing_ids: set) -> dict:
     """Return entry with already-registered hooks removed, or None if nothing new remains."""
     if "hooks" in entry:
         new_hook_list = [
-            h for h in entry.get("hooks", []) if _hook_identity(h) not in existing_ids
+            h for h in (entry.get("hooks") or []) if _hook_identity(h) not in existing_ids
         ]
         if not new_hook_list:
             return None
@@ -616,11 +623,12 @@ def _prune_vibemon_hooks(existing: dict, keep_for_event) -> list:
         changed = False
         for entry in existing[event]:
             if "hooks" in entry:
+                entry_hooks = entry.get("hooks") or []
                 kept = [
-                    h for h in entry.get("hooks", [])
+                    h for h in entry_hooks
                     if not _is_vibemon_hook(h) or _hook_identity(h) in keep
                 ]
-                if len(kept) != len(entry.get("hooks", [])):
+                if len(kept) != len(entry_hooks):
                     changed = True
                     if kept:
                         cleaned_entries.append({**entry, "hooks": kept})
@@ -671,6 +679,8 @@ def replace_vibemon_hooks(existing: dict, new_hooks: dict) -> tuple[dict, list]:
     the same. Removing only VibeMon entries before merging ensures those
     fields are refreshed without touching neighboring user configuration.
     """
+    if not isinstance(existing, dict):
+        existing = {}
     replaced = strip_all_vibemon_hooks(existing)
     return merge_hooks(existing, new_hooks), replaced
 
@@ -693,8 +703,13 @@ def hook_python() -> str:
     exist and to be able to run the hooks. It also pins the hooks to a specific
     Python: after a Python upgrade moves the executable, the installer has to
     be re-run.
+
+    Forward-slashed via hook_path(): a Windows path such as C:\\Python313\\
+    python.exe reaches shell-form commands (Claude statusLine, Codex's
+    commandWindows, Kiro's action.command) where Git Bash consumes unquoted
+    backslashes as escapes.
     """
-    return sys.executable or "python"
+    return hook_path(Path(sys.executable or "python"))
 
 
 def hook_path(path: Path) -> str:
@@ -707,8 +722,10 @@ def hook_path(path: Path) -> str:
     return str(path).replace("\\", "/")
 
 
-def _shell_quote(value: str) -> str:
+def _shell_quote(value: str, windows: bool = None) -> str:
     """Quote a path for a shell-form command, only when it actually needs it."""
+    if not (IS_WINDOWS if windows is None else windows):
+        return shlex.quote(value)
     return f'"{value}"' if " " in value else value
 
 
@@ -750,7 +767,7 @@ def windows_shell_command(python: str, script: str) -> str:
     quoted first token forces a choice: PowerShell needs the call operator `&`
     in front of it, which Git Bash would read as backgrounding the command.
     """
-    command = f"{_shell_quote(python)} {_shell_quote(script)}"
+    command = f"{_shell_quote(python, windows=True)} {_shell_quote(script, windows=True)}"
     if " " in python and not has_git_bash():
         return f"& {command}"
     return command
@@ -816,7 +833,10 @@ def adapt_claude_settings(settings: dict, claude_home: Path = None) -> dict:
 
     status_line = settings.get("statusLine")
     if isinstance(status_line, dict) and "statusline.py" in status_line.get("command", ""):
-        status_line["command"] = windows_shell_command(python, statusline_script)
+        status_line["command"] = (
+            windows_shell_command(python, statusline_script) if IS_WINDOWS
+            else f"{python} {_shell_quote(statusline_script)}"
+        )
 
     return settings
 
@@ -994,9 +1014,12 @@ def configure_vibemon_config(source: FileSource, cli_token: str = None) -> str:
 
     config = configure_token(config, cli_token)
 
-    # 0600: this file holds the VibeMon API token.
-    if save_config(config_path, config, mode=0o600):
-        print(f"  {colored('✓', 'green')} ~/.vibemon/config.json saved")
+    # 0600: this file holds the VibeMon API token. A failed write must fail the
+    # platform (run_install reports it) instead of silently reporting success
+    # with no token persisted.
+    if not save_config(config_path, config, mode=0o600):
+        raise RuntimeError("could not write ~/.vibemon/config.json")
+    print(f"  {colored('✓', 'green')} ~/.vibemon/config.json saved")
 
     VIBEMON_CONFIG_CACHE["token"] = config.get("vibemon_token", "")
     return VIBEMON_CONFIG_CACHE["token"]
@@ -1030,7 +1053,7 @@ def install_vibemon_shared(source: FileSource) -> bool:
     return ok
 
 
-def configure_statusline_config(source: FileSource) -> None:
+def configure_statusline_config(source: FileSource) -> bool:
     """Configure ~/.vibemon/statusline.json (Claude Code statusline display
     settings). On first creation, migrates any statusline-only keys found in
     a pre-split single config.json so existing customizations aren't reset.
@@ -1064,6 +1087,8 @@ def configure_statusline_config(source: FileSource) -> None:
 
     if save_config(statusline_path, statusline_config):
         print(f"  {colored('✓', 'green')} ~/.vibemon/statusline.json saved")
+        return True
+    return False
 
 
 def install_claude(source: FileSource, cli_token: str = None) -> bool:
@@ -1110,21 +1135,25 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
 
     if settings_file.exists():
         existing_settings = load_json_or_backup(settings_file)
+        if not isinstance(existing_settings, dict):
+            existing_settings = {}
 
         if "hooks" in existing_settings:
-            stale = remove_stale_vibemon_hooks(
+            # Strip and re-merge VibeMon's own entries: command identity alone
+            # is unchanged across upgrades, so fields like async/timeout/
+            # statusMessage would otherwise keep their old values. User hooks
+            # under the same events are preserved.
+            existing_settings["hooks"], replaced = replace_vibemon_hooks(
                 existing_settings["hooks"], new_settings["hooks"]
             )
-            if stale:
-                print(f"  {colored('✓', 'green')} removed unused VibeMon hooks: {', '.join(stale)}")
-            existing_settings["hooks"] = merge_hooks(
-                existing_settings["hooks"], new_settings["hooks"]
-            )
+            if replaced:
+                print(f"  {colored('✓', 'green')} refreshed VibeMon hooks: {', '.join(replaced)}")
         else:
             existing_settings["hooks"] = new_settings["hooks"]
 
-        if "statusLine" in existing_settings:
-            existing_cmd = existing_settings["statusLine"].get("command", "")
+        status_line = existing_settings.get("statusLine")
+        if isinstance(status_line, dict):
+            existing_cmd = status_line.get("command", "")
             new_cmd = new_settings["statusLine"].get("command", "")
             if existing_cmd != new_cmd:
                 print(f"\n  Current statusLine: {colored(existing_cmd, 'yellow')}")
@@ -1139,9 +1168,19 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
                     print(f"  {colored('!', 'yellow')} statusLine unchanged{hint}")
             else:
                 print(f"  {colored('✓', 'green')} statusLine already configured")
-        else:
+        elif status_line is None:
             existing_settings["statusLine"] = new_settings["statusLine"]
             print(f"  {colored('✓', 'green')} statusLine added")
+        else:
+            # A malformed (non-object) statusLine must not abort the install.
+            # It is user-owned, so ask before replacing it, like the dict path.
+            print(f"\n  Current statusLine is not an object: {colored(str(status_line), 'yellow')}")
+            if ask_yes_no("Replace statusLine?", unattended=False):
+                existing_settings["statusLine"] = new_settings["statusLine"]
+                print(f"  {colored('✓', 'green')} statusLine updated")
+            else:
+                hint = " (pass --yes to replace it)" if NON_INTERACTIVE and not AUTO_APPROVE else ""
+                print(f"  {colored('!', 'yellow')} statusLine unchanged{hint}")
 
         write_text_atomic(settings_file, json.dumps(existing_settings, indent=2) + "\n")
         print(f"  {colored('✓', 'green')} hooks merged into settings.json")
@@ -1152,7 +1191,7 @@ def install_claude(source: FileSource, cli_token: str = None) -> bool:
         print(f"  {colored('✓', 'green')} settings.json created")
 
     configure_vibemon_config(source, cli_token)
-    configure_statusline_config(source)
+    ok &= configure_statusline_config(source)
     ok &= install_vibemon_shared(source)
 
     if not ok:
@@ -1177,19 +1216,45 @@ def ensure_codex_status_line(config_text: str) -> str:
     tui_match = re.search(r"(?ms)^\[tui\]\n(.*?)(?=^\[|\Z)", config_text)
     if tui_match:
         section = tui_match.group(0)
-        status_line_match = re.search(r"(?ms)^status_line\s*=\s*\[(.*?)^\]", section)
+        # Match an array value whether it is inline (`status_line = ["a"]`) or
+        # multi-line. Anchoring the close on a column-zero `]` (the old regex)
+        # missed inline arrays and spliced items in without a separating comma
+        # when the multi-line list lacked a trailing comma, producing invalid
+        # TOML — a duplicate key or an unterminated element.
+        status_line_match = re.search(r"(?ms)^status_line\s*=\s*\[(.*?)\]", section)
         if status_line_match:
+            # Only rebuild plain basic-string arrays. Literal strings, escapes,
+            # comments and brackets inside strings require a TOML parser; keep
+            # that user configuration intact instead of extracting partial values.
+            if not re.fullmatch(
+                r'\s*(?:"[^"\\\n]*"\s*(?:,\s*"[^"\\\n]*"\s*)*,?\s*)?',
+                status_line_match.group(1),
+            ):
+                print("  Warning: preserving unsupported Codex status_line syntax")
+                return config_text
             existing_items = re.findall(r'"([^"]+)"', status_line_match.group(1))
             missing_items = [
                 item for item in CODEX_STATUS_LINE_ITEMS if item not in existing_items
             ]
             if not missing_items:
                 return config_text
-            insertion = "".join(f'  "{item}",\n' for item in missing_items)
+            rebuilt = "status_line = [\n"
+            for item in (*existing_items, *missing_items):
+                rebuilt += f'  "{item}",\n'
+            rebuilt += "]"
             updated_section = (
-                section[:status_line_match.end() - 1]
-                + insertion
-                + section[status_line_match.end() - 1:]
+                section[:status_line_match.start()]
+                + rebuilt
+                + section[status_line_match.end():]
+            )
+        elif re.search(r"(?m)^status_line\s*=", section):
+            # A non-array value (e.g. a bare string) can't be merged; replace it
+            # wholesale rather than appending a second, duplicate `status_line`.
+            status_line = "status_line = [\n"
+            status_line += "".join(f'  "{item}",\n' for item in CODEX_STATUS_LINE_ITEMS)
+            status_line += "]"
+            updated_section = re.sub(
+                r"(?m)^status_line[^\n]*", status_line, section, count=1
             )
         else:
             status_line = "status_line = [\n"
@@ -1252,6 +1317,8 @@ def install_codex(source: FileSource, cli_token: str = None) -> bool:
 
     if hooks_file.exists():
         existing_hooks = load_json_or_backup(hooks_file)
+        if not isinstance(existing_hooks, dict):
+            existing_hooks = {}
 
         existing_map = existing_hooks.get("hooks", {})
         new_map = new_hooks.get("hooks", {})
@@ -1636,6 +1703,8 @@ def _uninstall_hooks_from_json(config_file: Path, hooks_key_path: list, label: s
     if not config_file.exists():
         return
     config = load_json_or_backup(config_file)
+    if not isinstance(config, dict):
+        return
     container = config
     for key in hooks_key_path:
         container = container.get(key)
@@ -1875,8 +1944,9 @@ Examples:
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
     curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --all
 
-Exit status is 0 only when every selected platform succeeded. Platforms whose
-tool isn't installed are reported as skipped and don't affect the status.
+Exit status is 0 only when every selected platform succeeded. A platform whose
+tool isn't installed is reported as skipped and does not fail a run where
+another selected platform succeeded; a run in which nothing succeeded exits 1.
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )

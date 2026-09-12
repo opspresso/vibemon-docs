@@ -46,6 +46,35 @@ def run_hook(
     return sent
 
 
+class ParseJsonTest(unittest.TestCase):
+    def test_non_object_json_yields_empty_dict(self):
+        for raw in ("[]", "123", "null", '"x"'):
+            self.assertEqual(vibemon_core.parse_json(raw), {})
+
+    def test_object_json_is_returned(self):
+        self.assertEqual(vibemon_core.parse_json('{"a": 1}'), {"a": 1})
+
+    def test_invalid_json_yields_empty_dict(self):
+        self.assertEqual(vibemon_core.parse_json("{not json"), {})
+
+
+class ProjectMetadataTest(unittest.TestCase):
+    def test_non_dict_cache_file_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "projects.json"
+            cache_path.write_text("[]")
+            config = vibemon_core.Config(
+                http_urls=(),
+                serial_port=None,
+                cache_path=str(cache_path),
+                auto_launch=False,
+                vibemon_url=None,
+                vibemon_token=None,
+            )
+            with patch.object(vibemon_core, "get_config", return_value=config):
+                self.assertEqual(vibemon_core.get_project_metadata("p"), {})
+
+
 class UsageFieldsTest(unittest.TestCase):
     def test_usage_fields_include_model_scoped_week(self):
         with patch.object(vibemon_core.time, "time", return_value=1000):
@@ -155,6 +184,10 @@ class VibemonHomeGuardTest(unittest.TestCase):
         sent = run_hook({"hook_event_name": "ObsoleteEvent", "cwd": "/tmp"})
         self.assertEqual(sent, [])
 
+    def test_non_object_stdin_payload_is_skipped_not_crashed(self):
+        sent = run_hook([1, 2, 3])
+        self.assertEqual(sent, [])
+
     def test_event_alias_is_normalized_before_state_mapping(self):
         sent = run_hook(
             {"hook_event_name": "sessionStart", "cwd": "/tmp"},
@@ -203,6 +236,59 @@ class SerialDebounceLockTest(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertEqual(sent, [(str(Path(directory) / "ttyDevice"), '{"x":1}')])
+
+
+class SuppressedHookTest(unittest.TestCase):
+    def test_cli_command_runs_even_when_hooks_are_suppressed(self):
+        called = []
+
+        def fake_handle(cmd, args):
+            called.append(cmd)
+            return True
+
+        with (
+            patch.dict(os.environ, {"VIBEMON_SUPPRESS_HOOKS": "1"}),
+            patch.object(vibemon_core, "handle_command", fake_handle),
+            patch.object(sys, "argv", ["vibemon.py", "--status"]),
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                vibemon_core.run(EVENT_STATE_MAP, lambda *a: {}, "SessionStart")
+
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertEqual(called, ["--status"])
+
+
+@unittest.skipIf(vibemon_core.fcntl is None, "POSIX serial transport")
+class SerialWriteTest(unittest.TestCase):
+    def _send(self, write_side_effect):
+        with tempfile.TemporaryDirectory() as directory:
+            port = str(Path(directory) / "ttyDevice")
+            Path(port).touch()
+            with (
+                patch.object(vibemon_core, "IS_WINDOWS", False),
+                patch.object(vibemon_core, "_acquire_lock", return_value=True),
+                patch.object(vibemon_core.time, "sleep"),
+                patch.object(vibemon_core.subprocess, "run"),
+                patch.object(vibemon_core.os, "write", side_effect=write_side_effect),
+            ):
+                return vibemon_core.send_serial_raw(port, '{"x":1}')
+
+    def test_retries_eagain_then_writes_the_whole_payload(self):
+        written = []
+        state = {"first": True}
+
+        def fake_write(fd, data):
+            if state["first"]:
+                state["first"] = False
+                raise BlockingIOError()
+            written.append(bytes(data))
+            return len(data)
+
+        self.assertTrue(self._send(fake_write))
+        self.assertEqual(b"".join(written), b'{"x":1}\n')
+
+    def test_zero_byte_write_aborts_instead_of_looping(self):
+        self.assertFalse(self._send(lambda fd, data: 0))
 
 
 if __name__ == "__main__":

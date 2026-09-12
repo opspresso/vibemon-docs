@@ -6,9 +6,10 @@
  *
  * Hooks used:
  * - before_agent_run (fallback: deprecated before_agent_start) -> thinking
- * - before_tool_call -> working (with tool name)
+ * - before_tool_call / after_tool_call -> working / thinking
  * - subagent_spawned -> working
- * - message_sent -> done (with delay to prevent premature transition)
+ * - agent_end -> done (after all active runs finish, including failures)
+ * - before_compaction / after_compaction -> packing / thinking
  * - gateway_start -> start
  *
  * Output:
@@ -29,8 +30,12 @@ let currentState = "idle";
 let doneTimer = null;
 let ttyPath = null;
 let lastSendTime = 0;
-let cachedModel = null;
-let lastMemoryPercent = null;
+let lastPayload = "";
+let hostConfig = {};
+const runs = new Map();
+const sendLanes = new Map();
+const HTTP_TIMEOUT_MS = 2500;
+const CORE_SCRIPT = path.join(os.homedir(), ".vibemon", "vibemon_core.py");
 
 // Built-in defaults (lowest precedence)
 const DEFAULT_CONFIG = {
@@ -101,7 +106,7 @@ function loadSharedConfig() {
 
   try {
     const json = JSON.parse(fs.readFileSync(SHARED_CONFIG_PATH, "utf-8"));
-    sharedConfig = json && typeof json === "object" ? json : {};
+    sharedConfig = json && typeof json === "object" && !Array.isArray(json) ? json : {};
   } catch (err) {
     debug(`Failed to read shared config: ${err.message}`);
     sharedConfig = {};
@@ -129,22 +134,30 @@ function firstNonEmpty(...values) {
  * interpret the same file. An explicit boolean in pluginConfig overrides.
  */
 function resolveConfig() {
-  const sharedHttpUrls = Array.isArray(sharedConfig.http_urls)
-    ? sharedConfig.http_urls.filter((u) => typeof u === "string" && u)
-    : [];
+  const urls = (value) => (Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [])
+    .filter((u) => typeof u === "string" && u.trim()).map((u) => u.trim());
+  const sharedHttpUrls = urls(process.env.VIBEMON_HTTP_URLS ?? sharedConfig.http_urls);
   const pluginHttpUrls = Array.isArray(pluginConfig.httpUrls)
     ? pluginConfig.httpUrls.filter((u) => typeof u === "string" && u)
     : [];
+
+  const serialPort = firstNonEmpty(
+    pluginConfig.serialPort,
+    process.env.VIBEMON_SERIAL_PORT,
+    sharedConfig.serial_port,
+    null,
+  );
 
   return {
     projectName: pluginConfig.projectName ?? DEFAULT_CONFIG.projectName,
     character: pluginConfig.character ?? DEFAULT_CONFIG.character,
     serialEnabled: typeof pluginConfig.serialEnabled === "boolean"
       ? pluginConfig.serialEnabled
-      : Boolean(sharedConfig.serial_port),
+      : Boolean(serialPort),
+    serialPort,
     httpEnabled: typeof pluginConfig.httpEnabled === "boolean"
       ? pluginConfig.httpEnabled
-      : sharedHttpUrls.length > 0,
+      : pluginHttpUrls.length > 0 || sharedHttpUrls.length > 0,
     httpUrls: pluginHttpUrls.length > 0
       ? pluginHttpUrls
       : sharedHttpUrls.length > 0
@@ -152,10 +165,13 @@ function resolveConfig() {
         : DEFAULT_CONFIG.httpUrls,
     autoLaunch: typeof pluginConfig.autoLaunch === "boolean"
       ? pluginConfig.autoLaunch
-      : typeof sharedConfig.auto_launch === "boolean"
+      : process.env.VIBEMON_AUTO_LAUNCH !== undefined
+        ? process.env.VIBEMON_AUTO_LAUNCH === "1"
+        : typeof sharedConfig.auto_launch === "boolean"
         ? sharedConfig.auto_launch
         : DEFAULT_CONFIG.autoLaunch,
-    debug: pluginConfig.debug ?? DEFAULT_CONFIG.debug,
+    debug: pluginConfig.debug ?? (process.env.DEBUG !== undefined
+      ? process.env.DEBUG === "1" : sharedConfig.debug === true),
     vibemonUrl: firstNonEmpty(
       pluginConfig.vibemonUrl,
       process.env.VIBEMON_URL,
@@ -177,7 +193,10 @@ function resolveConfig() {
  */
 function refreshConfig() {
   if (loadSharedConfig()) {
+    const previousPort = config.serialPort;
     config = resolveConfig();
+    if (previousPort !== config.serialPort) ttyPath = null;
+    lastPayload = "";
     debug(`Shared config reloaded (HTTP: ${config.httpEnabled}, ${config.httpUrls.length} URLs)`);
   }
 }
@@ -193,14 +212,8 @@ function clampPercent(value) {
 
 /**
  * Extract a 0-100 context-window usage percentage from an OpenClaw
- * model-call event (model_call_ended / reply_payload_sending), if present.
- *
- * Field shapes below (usageState.context.*, contextTokenBudget + usage.*)
- * come from OpenClaw's hook docs but aren't pinned to a stable schema
- * version across releases, so every access is optional-chained: a
- * missing/renamed field falls back to null (no memory data) instead of
- * throwing, matching the previous "memory: 0" behavior rather than
- * breaking status reporting.
+ * llm_output event. The official usage fields are input/output/cacheRead/
+ * cacheWrite/total; older usageState and token-name forms remain supported.
  */
 function extractMemoryPercent(event) {
   if (!event || typeof event !== "object") return null;
@@ -225,7 +238,11 @@ function extractMemoryPercent(event) {
   const budget = event.contextTokenBudget;
   const usage = event.usage;
   if (typeof budget === "number" && budget > 0 && usage && typeof usage === "object") {
-    const used = usage.totalTokens ?? usage.total_tokens ?? usage.inputTokens ?? usage.input_tokens;
+    const components = [usage.input, usage.output, usage.cacheRead, usage.cacheWrite];
+    const used = usage.total ?? usage.totalTokens ?? usage.total_tokens
+      ?? (components.some(Number.isFinite)
+        ? components.reduce((sum, n) => sum + (Number.isFinite(n) ? n : 0), 0)
+        : usage.inputTokens ?? usage.input_tokens);
     if (typeof used === "number") {
       const pct = clampPercent((used / budget) * 100);
       if (pct !== null) return pct;
@@ -236,34 +253,12 @@ function extractMemoryPercent(event) {
 }
 
 /**
- * Read model from ~/.openclaw/openclaw.json
+ * Read the fallback model from the host's parsed configuration.
  */
 function readModelFromConfig() {
-  if (cachedModel) return cachedModel;
-
-  try {
-    const configPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
-    if (!fs.existsSync(configPath)) {
-      debug("openclaw.json not found");
-      return null;
-    }
-
-    const content = fs.readFileSync(configPath, "utf-8");
-    const json = JSON.parse(content);
-
-    // Get model from agents.defaults.model.primary
-    const model = json?.agents?.defaults?.model?.primary;
-    if (model) {
-      // Extract short name (e.g., "openai/gpt-5.2" -> "gpt-5.2")
-      cachedModel = model.includes("/") ? model.split("/").pop() : model;
-      debug(`Model from config: ${cachedModel}`);
-      return cachedModel;
-    }
-  } catch (err) {
-    debug(`Failed to read model: ${err.message}`);
-  }
-
-  return null;
+  const value = hostConfig?.agents?.defaults?.model;
+  const model = typeof value === "string" ? value : value?.primary;
+  return typeof model === "string" ? model.split("/").pop() : "";
 }
 
 /**
@@ -316,14 +311,46 @@ function findTtyDevice() {
 }
 
 /**
+ * Resolve a configured serial_port: expand `~`, and expand a single `*`
+ * wildcard against the device directory (mirroring vibemon_core's
+ * resolve_serial_port). Returns null when nothing matches.
+ */
+function resolveSerialPort(pattern) {
+  if (typeof pattern !== "string" || !pattern) return null;
+
+  let resolved = pattern.trim();
+  if (resolved.startsWith("~")) {
+    resolved = path.join(os.homedir(), resolved.slice(1));
+  }
+  if (!resolved.includes("*")) {
+    return fs.existsSync(resolved) ? resolved : null;
+  }
+
+  const dir = path.dirname(resolved);
+  const base = path.basename(resolved);
+  const regex = new RegExp(
+    "^" + base.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$",
+  );
+  try {
+    const matches = fs.readdirSync(dir).filter((name) => regex.test(name)).sort();
+    return matches.length > 0 ? path.join(dir, matches[0]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Send status to ESP32 via serial
  */
 function sendSerial(payload) {
   if (!config.serialEnabled) return;
 
-  // Find TTY device if not found yet
+  // Resolve the configured port first; fall back to auto-detection when no
+  // explicit serial_port is set.
   if (!ttyPath) {
-    ttyPath = findTtyDevice();
+    ttyPath = config.serialPort
+      ? resolveSerialPort(config.serialPort)
+      : findTtyDevice();
     if (ttyPath) {
       debug(`Using TTY: ${ttyPath}`);
     }
@@ -331,22 +358,35 @@ function sendSerial(payload) {
 
   if (!ttyPath) return;
 
-  try {
-    const json = JSON.stringify(payload) + "\n";
-    fs.writeFileSync(ttyPath, json, { flag: "a" });
-    debug(`Serial sent: ${json.trim()}`);
-  } catch (err) {
-    debug(`Serial write failed: ${err.message}`);
-    // Reset TTY path to retry finding device
-    ttyPath = null;
-  }
+  const port = ttyPath;
+  enqueueSend(`serial:${port}`, () => new Promise((resolve) => {
+    // Share Python's baud-rate setup, nonblocking writes and file locks with
+    // every other agent. Never open a potentially blocking TTY in the gateway.
+    const child = spawn("python3", [CORE_SCRIPT, "--send-serial", port], {
+      stdio: ["pipe", "ignore", "ignore"],
+      timeout: 5000,
+      killSignal: "SIGKILL",
+      windowsHide: true,
+    });
+    child.on("error", () => { ttyPath = null; resolve(); });
+    child.on("close", (code) => {
+      if (code !== 0) ttyPath = null;
+      resolve();
+    });
+    child.stdin.on("error", () => {});
+    child.stdin.end(JSON.stringify(payload));
+    child.unref();
+  }));
 }
 
 /**
  * Get Desktop App URL from config (localhost or 127.0.0.1)
  */
 function getDesktopAppUrl() {
-  return config.httpUrls.find((url) => url.includes("127.0.0.1") || url.includes("localhost"));
+  return config.httpUrls.find((url) => {
+    try { return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname); }
+    catch { return false; }
+  });
 }
 
 /**
@@ -357,7 +397,9 @@ async function isDesktopRunning() {
   if (!desktopUrl) return false;
 
   try {
-    const response = await fetch(`${desktopUrl}/health`, { method: "GET" });
+    const response = await fetch(`${desktopUrl.replace(/\/+$/, "")}/health`, {
+      method: "GET", signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     return response.ok;
   } catch {
     return false;
@@ -376,6 +418,7 @@ function launchDesktop() {
       detached: true,
       stdio: "ignore",
     });
+    child.on("error", (err) => debug(`Desktop launch failed: ${err.message}`));
     child.unref();
     debug("Desktop App launch command sent");
   } catch (err) {
@@ -407,10 +450,11 @@ async function autoLaunchDesktop() {
  */
 async function sendHttpToUrl(url, payload) {
   try {
-    const response = await fetch(`${url}/status`, {
+    const response = await fetch(`${url.replace(/\/+$/, "")}/status`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -426,22 +470,11 @@ async function sendHttpToUrl(url, payload) {
 }
 
 /**
- * Send status to all VibeMon targets via HTTP (parallel)
- */
-async function sendHttp(payload) {
-  if (!config.httpEnabled || config.httpUrls.length === 0) return;
-
-  // Send to all URLs in parallel
-  const promises = config.httpUrls.map((url) => sendHttpToUrl(url, payload));
-  await Promise.allSettled(promises);
-}
-
-/**
  * Send status to VibeMon API with Bearer token authentication
  */
-async function sendVibeMonApi(payload) {
+async function sendVibeMonApi(payload, target = config) {
   // Check if VibeMon API is configured
-  if (!config.vibemonUrl || !config.vibemonToken) {
+  if (!target.vibemonUrl || !target.vibemonToken) {
     debug(`VibeMon API skipped: url=${config.vibemonUrl ? "set" : "empty"}, token=${config.vibemonToken ? "set" : "empty"}`);
     return false;
   }
@@ -454,7 +487,7 @@ async function sendVibeMonApi(payload) {
 
   // Build API URL (strip trailing slash) — /api/status, matching the
   // Python bridges (the cloud's bare /status only works via a rewrite)
-  const baseUrl = config.vibemonUrl.replace(/\/+$/, "");
+  const baseUrl = target.vibemonUrl.replace(/\/+$/, "");
   const apiUrl = `${baseUrl}/api/status`;
 
   const apiPayload = {
@@ -474,9 +507,10 @@ async function sendVibeMonApi(payload) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.vibemonToken}`,
+        Authorization: `Bearer ${target.vibemonToken}`,
       },
       body: JSON.stringify(apiPayload),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
 
     const responseText = await response.text();
@@ -508,19 +542,10 @@ function buildPayload(state, extra = {}) {
     state,
     project: config.projectName,
     character: config.character,
+    model: readModelFromConfig(),
+    memory: 0,
     ...extra,
   };
-
-  // Add model if available
-  const model = readModelFromConfig();
-  if (model) {
-    payload.model = model;
-  }
-
-  // Add context-window usage if a model-call event has reported one
-  if (lastMemoryPercent !== null) {
-    payload.memory = lastMemoryPercent;
-  }
 
   return payload;
 }
@@ -529,41 +554,49 @@ function buildPayload(state, extra = {}) {
  * Send status (debounced) - sends to all configured targets
  */
 function sendStatus(state, extra = {}) {
+  if (process.env.VIBEMON_SUPPRESS_HOOKS === "1") return;
   refreshConfig();
 
+  const payload = buildPayload(state, extra);
+  const signature = JSON.stringify(payload);
   const now = Date.now();
-  if (now - lastSendTime < MIN_SEND_INTERVAL_MS && state === currentState) {
+  if (now - lastSendTime < MIN_SEND_INTERVAL_MS && signature === lastPayload) {
     return;
   }
   lastSendTime = now;
+  lastPayload = signature;
   currentState = state;
 
-  const payload = buildPayload(state, extra);
-
-  // Send to serial (synchronous)
+  // Queue serial output through the shared Python transport
   sendSerial(payload);
 
-  // Send to HTTP and VibeMon API (async, fire-and-forget with error logging)
-  const asyncTasks = [];
-
-  if (config.httpEnabled && config.httpUrls.length > 0) {
-    asyncTasks.push(sendHttp(payload));
+  if (config.httpEnabled) {
+    for (const url of config.httpUrls) {
+      enqueueSend(`http:${url}`, () => sendHttpToUrl(url, payload));
+    }
   }
-
   if (config.vibemonUrl && config.vibemonToken) {
-    asyncTasks.push(sendVibeMonApi(payload));
+    const target = config;
+    enqueueSend(`api:${target.vibemonUrl}`, () => sendVibeMonApi(payload, target));
   }
+}
 
-  // Execute all async tasks in parallel
-  if (asyncTasks.length > 0) {
-    Promise.allSettled(asyncTasks).then((results) => {
-      results.forEach((result, index) => {
-        if (result.status === "rejected") {
-          debug(`Async send failed: ${result.reason}`);
-        }
-      });
-    });
-  }
+// One request per target at a time, retaining only its newest pending state.
+// A slow endpoint cannot reorder statuses or delay another healthy endpoint.
+function enqueueSend(key, send) {
+  let lane = sendLanes.get(key);
+  if (lane) { lane.pending = send; return lane.done; }
+  lane = { pending: send };
+  sendLanes.set(key, lane);
+  lane.done = (async () => {
+    while (lane.pending) {
+      const next = lane.pending;
+      lane.pending = null;
+      try { await next(); } catch (err) { debug(`Send failed: ${err.message}`); }
+    }
+    sendLanes.delete(key);
+  })();
+  return lane.done;
 }
 
 /**
@@ -580,14 +613,15 @@ function cancelDoneTimer() {
 /**
  * Schedule done state with delay
  */
-function scheduleDone() {
+function scheduleDone(extra = {}) {
+  if (runs.size) return;
   cancelDoneTimer();
   debug(`Scheduling done in ${DONE_DELAY_MS}ms`);
 
   doneTimer = setTimeout(() => {
     doneTimer = null;
     debug("Done timer fired -> done");
-    sendStatus("done");
+    if (!runs.size) sendStatus("done", extra);
   }, DONE_DELAY_MS);
 }
 
@@ -602,6 +636,7 @@ const plugin = {
 
   register(api) {
     logger = api.logger;
+    hostConfig = api.config || {};
 
     // Resolve config: openclaw.json plugin config > env > shared config
     pluginConfig = api.pluginConfig || {};
@@ -625,7 +660,7 @@ const plugin = {
 
     // Find TTY device at startup
     if (config.serialEnabled) {
-      ttyPath = findTtyDevice();
+      ttyPath = config.serialPort ? resolveSerialPort(config.serialPort) : findTtyDevice();
       if (ttyPath) {
         api.logger.info(`[vibemon] TTY device: ${ttyPath}`);
       } else {
@@ -633,94 +668,141 @@ const plugin = {
       }
     }
 
-    // Send start state on gateway start
+    function runKey(event, ctx) {
+      const id = ctx?.runId || event?.runId;
+      if (id && runs.has(id)) return id;
+      const sessionId = ctx?.sessionId || event?.sessionId;
+      const sessionKey = ctx?.sessionKey || event?.sessionKey;
+      for (const [key, run] of runs) {
+        if (id && run.runId === id) return key;
+        if (id && run.runId && run.runId !== id) continue;
+        if ((sessionId && run.sessionId === sessionId) ||
+            (sessionKey && run.sessionKey === sessionKey)) return key;
+      }
+      return id || sessionKey || sessionId || "legacy";
+    }
+
+    function runContext(event, ctx) {
+      const key = runKey(event, ctx);
+      if (!runs.has(key)) {
+        runs.set(key, {
+          sessionId: ctx?.sessionId || event?.sessionId,
+          sessionKey: ctx?.sessionKey || event?.sessionKey,
+          model: ctx?.modelId || readModelFromConfig(),
+          memory: 0,
+          tools: new Map(),
+        });
+      }
+      const run = runs.get(key);
+      run.runId ||= ctx?.runId || event?.runId;
+      return run;
+    }
+
+    function metadata(run) {
+      return { model: run?.model || readModelFromConfig(), memory: run?.memory || 0 };
+    }
+
+    function reportActive(preferred) {
+      const working = [...runs.values()].find((run) => run.tools.size);
+      const run = working || preferred || [...runs.values()].at(-1);
+      sendStatus(working ? "working" : "thinking", {
+        ...metadata(run),
+        tool: working ? [...working.tools.values()].at(-1) : "",
+      });
+    }
+
     api.on("gateway_start", async () => {
-      debug("Gateway started -> start");
-      await autoLaunchDesktop();
+      cancelDoneTimer();
+      runs.clear();
       sendStatus("start", { note: "gateway_started" });
+      await autoLaunchDesktop();
+      // Preserve a turn that began while the desktop was launching.
+      if (runs.size) reportActive();
+      else if (currentState === "start") sendStatus("start");
     });
 
-    // Agent turn begins -> thinking. before_agent_run is the current phase
-    // hook; before_agent_start is its deprecated predecessor, kept so older
-    // gateways still report. Duplicate fires coalesce in sendStatus's
-    // same-state debounce.
     const onAgentTurnStart = (event, ctx) => {
       cancelDoneTimer();
-      debug("Agent turn starting -> thinking");
-      sendStatus("thinking");
+      reportActive(runContext(event, ctx));
     };
     api.on("before_agent_run", onAgentTurnStart);
     api.on("before_agent_start", onAgentTurnStart);
 
-    // Subagent spawned -> working. OpenClaw exposes this directly; the
-    // Claude/Codex bridges observe the same work through their Agent tool hook.
-    api.on("subagent_spawned", (event, ctx) => {
+    api.on("subagent_spawned", () => {
       cancelDoneTimer();
-      debug("Subagent spawned -> working");
       sendStatus("working");
     });
 
-    // Before tool call -> working
     api.on("before_tool_call", (event, ctx) => {
       cancelDoneTimer();
-      const toolName = event.toolName || ctx.toolName || "unknown";
-      debug(`Tool call: ${toolName} -> working`);
-      sendStatus("working", { tool: toolName });
+      const run = runContext(event, ctx);
+      const tool = event?.toolName || ctx?.toolName || "unknown";
+      run.tools.set(event?.toolCallId || ctx?.toolCallId || tool, tool);
+      reportActive(run);
     });
 
-    // Context-window usage (best-effort; exact fields vary by OpenClaw
-    // version, see extractMemoryPercent). Only enriches the next status
-    // send -- never drives state transitions on its own.
-    api.on("model_call_ended", (event) => {
-      try {
-        const pct = extractMemoryPercent(event);
-        if (pct !== null) lastMemoryPercent = pct;
-      } catch (err) {
-        debug(`model_call_ended usage extraction failed: ${err.message}`);
-      }
+    api.on("after_tool_call", (event, ctx) => {
+      const run = runs.get(runKey(event, ctx));
+      if (!run) return; // A late result cannot revive a finished run.
+      run.tools.delete(event?.toolCallId || ctx?.toolCallId || event?.toolName || ctx?.toolName || "unknown");
+      reportActive(run);
     });
 
-    api.on("reply_payload_sending", (event) => {
-      try {
-        const pct = extractMemoryPercent(event);
-        if (pct !== null) lastMemoryPercent = pct;
-      } catch (err) {
-        debug(`reply_payload_sending usage extraction failed: ${err.message}`);
-      }
+    api.on("before_compaction", (event, ctx) => {
+      cancelDoneTimer();
+      sendStatus("packing", metadata(runs.get(runKey(event, ctx))));
+    });
+    api.on("after_compaction", (event, ctx) => {
+      const run = runs.get(runKey(event, ctx));
+      if (run) reportActive(run);
+      else sendStatus("thinking");
     });
 
-    // Message sent -> schedule done
-    api.on("message_sent", (event, ctx) => {
-      debug(`Message sent to ${event.to} (success: ${event.success})`);
-
-      if (event.success) {
-        // Schedule done with delay
-        scheduleDone();
-      }
+    // llm_output is the public usage-bearing event. model_call_ended has
+    // sanitized timing metadata only, so it cannot supply a usage gauge.
+    api.on("llm_output", (event, ctx) => {
+      const run = runs.get(runKey(event, ctx));
+      if (!run) return;
+      if (typeof event?.model === "string") run.model = event.model;
+      run.memory = extractMemoryPercent(event) ?? 0;
+    });
+    api.on("model_call_started", (event, ctx) => {
+      const run = runs.get(runKey(event, ctx));
+      if (run && typeof event?.model === "string") run.model = event.model;
     });
 
-    // Agent end -> schedule done (fallback)
+    // Channel messages may be progress updates; they are not proof that an
+    // agent run has finished. Retain the fallback only when no run is active.
+    api.on("message_sent", (event) => {
+      if (event?.success && !doneTimer && currentState !== "done") scheduleDone();
+    });
+
     api.on("agent_end", (event, ctx) => {
-      debug(`Agent ended (success: ${event.success})`);
-
-      if (event.success && !doneTimer) {
-        // Only schedule if not already scheduled by message_sent
-        scheduleDone();
-      }
+      const key = runKey(event, ctx);
+      const run = runs.get(key);
+      runs.delete(key);
+      if (runs.size) reportActive();
+      else scheduleDone(metadata(run));
     });
 
-    // Session end -> done immediately
     api.on("session_end", (event, ctx) => {
+      const sessionId = event?.sessionId || ctx?.sessionId;
+      const sessionKey = event?.sessionKey || ctx?.sessionKey;
+      for (const [key, run] of runs) {
+        if ((sessionId && run.sessionId === sessionId) ||
+            (sessionKey && run.sessionKey === sessionKey) ||
+            (!sessionId && !sessionKey && key === "legacy")) runs.delete(key);
+      }
       cancelDoneTimer();
-      debug("Session ended -> done");
-      sendStatus("done");
+      if (runs.size) reportActive();
+      else sendStatus("done");
     });
 
-    // Gateway stop -> done
-    api.on("gateway_stop", () => {
+    api.on("gateway_stop", async () => {
       cancelDoneTimer();
-      debug("Gateway stopped -> done");
+      runs.clear();
       sendStatus("done", { note: "gateway_stopped" });
+      await Promise.allSettled([...sendLanes.values()].map((lane) => lane.done));
     });
   },
 };

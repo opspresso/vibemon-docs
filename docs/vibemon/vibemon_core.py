@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -24,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from usage_cache import get_fresh_provider, load_usage_cache, model_week_bucket
@@ -55,6 +57,8 @@ def load_config() -> None:
             config = json.load(f)
     except (json.JSONDecodeError, IOError):
         return
+    if not isinstance(config, dict):
+        return
 
     # Map config keys to environment variables
     key_mapping = {
@@ -63,7 +67,8 @@ def load_config() -> None:
         "auto_launch": ("VIBEMON_AUTO_LAUNCH", lambda v: "1" if v else "0"),
         "http_urls": (
             "VIBEMON_HTTP_URLS",
-            lambda v: ",".join(v) if isinstance(v, list) else str(v),
+            lambda v: ",".join(u for u in v if isinstance(u, str))
+            if isinstance(v, list) else v if isinstance(v, str) else "",
         ),
         "serial_port": ("VIBEMON_SERIAL_PORT", str),
         "vibemon_url": ("VIBEMON_URL", str),
@@ -107,7 +112,9 @@ HTTP_TIMEOUT_SECONDS = 5
 # than sent as-is. Usage freshness is evaluated per provider; project metadata
 # continues to use its own entry timestamps.
 CACHE_STALE_SECONDS = 1800
-CODEX_SESSIONS_DIR = os.path.expanduser("~/.codex/sessions")
+CODEX_SESSIONS_DIR = str(
+    Path(os.environ.get("CODEX_HOME") or "~/.codex").expanduser() / "sessions"
+)
 
 # Desktop launch configuration
 DESKTOP_LAUNCH_WAIT_SECONDS = 3
@@ -199,11 +206,18 @@ def read_input() -> str:
 
 
 def parse_json(data: str) -> dict[str, Any]:
-    """Parse JSON string to dictionary."""
+    """Parse JSON string to dictionary.
+
+    Valid JSON that isn't an object (array, scalar, null) is treated as an
+    empty event: callers index the result with .get(), and a host that ever
+    writes a non-object payload must degrade to "no status" rather than
+    raising AttributeError out of the hook.
+    """
     try:
-        return json.loads(data)
+        value = json.loads(data)
     except (json.JSONDecodeError, TypeError):
         return {}
+    return value if isinstance(value, dict) else {}
 
 
 # ============================================================================
@@ -295,10 +309,12 @@ def get_project_metadata(project: str) -> dict[str, Any]:
     try:
         with open(config.cache_path, encoding="utf-8") as f:
             cache = json.load(f)
-        entry = cache.get(project, {})
     except (json.JSONDecodeError, IOError):
         return {}
 
+    if not isinstance(cache, dict):
+        return {}
+    entry = cache.get(project, {})
     if not isinstance(entry, dict):
         return {}
 
@@ -380,9 +396,13 @@ def get_codex_context_usage(data: dict[str, Any]) -> int:
             continue
         total_tokens = usage.get("total_tokens")
         context_window = info.get("model_context_window")
-        if not isinstance(total_tokens, (int, float)):
+        if not isinstance(total_tokens, (int, float)) or not math.isfinite(total_tokens):
             continue
-        if not isinstance(context_window, (int, float)) or context_window <= 0:
+        if (
+            not isinstance(context_window, (int, float))
+            or not math.isfinite(context_window)
+            or context_window <= 0
+        ):
             continue
         return max(0, min(100, int(total_tokens * 100 / context_window)))
     return 0
@@ -557,13 +577,15 @@ def send_serial_raw(port: str, data: str) -> bool:
                 ["stty", flag, port, SERIAL_BAUD_RATE],
                 check=False,
                 capture_output=True,
+                timeout=2,
             )
 
             # Write data. Open non-blocking so a device that never asserts
             # DCD/carrier can't hang this call indefinitely. os.write() may
-            # return a short count, so loop until every byte is sent; a
-            # BlockingIOError mid-loop propagates to the except below rather
-            # than silently sending a truncated payload.
+            # return a short count, so loop until every byte is sent. A full
+            # device buffer raises BlockingIOError, which is retried briefly
+            # (rather than aborting mid-frame) and gives up after the same
+            # bound as the lock; a zero-byte write would otherwise spin forever.
             open_flags = os.O_WRONLY
             if hasattr(os, "O_NONBLOCK"):
                 open_flags |= os.O_NONBLOCK
@@ -571,8 +593,21 @@ def send_serial_raw(port: str, data: str) -> bool:
             try:
                 payload_bytes = (data + "\n").encode()
                 written = 0
+                stalls = 0
                 while written < len(payload_bytes):
-                    written += os.write(port_fd, payload_bytes[written:])
+                    try:
+                        count = os.write(port_fd, payload_bytes[written:])
+                    except BlockingIOError:
+                        stalls += 1
+                        if stalls > SERIAL_LOCK_MAX_RETRIES:
+                            debug_log("Serial write stalled (device buffer full)")
+                            return False
+                        time.sleep(SERIAL_LOCK_RETRY_INTERVAL)
+                        continue
+                    if count <= 0:
+                        debug_log("Serial write made no progress; aborting")
+                        return False
+                    written += count
             finally:
                 os.close(port_fd)
 
@@ -581,7 +616,7 @@ def send_serial_raw(port: str, data: str) -> bool:
         finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
-    except (IOError, OSError) as e:
+    except (IOError, OSError, subprocess.TimeoutExpired) as e:
         debug_log(f"Serial send error: {e}")
         return False
     finally:
@@ -771,7 +806,10 @@ def _send_http_request(
 
 def is_localhost_url(url: str) -> bool:
     """Check if URL is localhost (Desktop App)."""
-    return "127.0.0.1" in url or "localhost" in url
+    try:
+        return urlsplit(url).hostname in {"127.0.0.1", "localhost", "::1"}
+    except ValueError:
+        return False
 
 
 def try_http_targets(
@@ -1108,7 +1146,14 @@ def send_to_all(payload: dict[str, Any], is_start: bool = False) -> None:
 # ============================================================================
 
 # Command handler mapping
+def send_serial_input(args: list[str]) -> bool:
+    """Internal serial transport entry point for the OpenClaw plugin."""
+    data = parse_json(read_input())
+    return bool(args and data) and send_serial(args[0], json.dumps(data))
+
+
 COMMAND_HANDLERS: dict[str, Any] = {
+    "--send-serial": send_serial_input,
     "--lock": lambda args: send_lock(
         args[0] if args else os.path.basename(os.getcwd())
     ),
@@ -1151,14 +1196,6 @@ def run(
       event name as the first argument, e.g. `vibemon.py promptSubmit`)
     - event_aliases: normalize a tool's payload event names before mapping
     """
-    if os.environ.get("VIBEMON_SUPPRESS_HOOKS") == "1":
-        # Set by VibeMon's own usage-refresher when it spawns
-        # `claude -p "/usage"` to refresh the plan-usage cache — that
-        # subprocess is a real Claude Code session and would otherwise report
-        # status here under a ".vibemon" project (its cwd).
-        debug_log("Hook suppressed (VIBEMON_SUPPRESS_HOOKS=1)")
-        return
-
     argv_event = ""
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
@@ -1169,18 +1206,32 @@ def run(
         if argv_event_fallback:
             argv_event = cmd
 
+    if os.environ.get("VIBEMON_SUPPRESS_HOOKS") == "1":
+        # Set by VibeMon's own usage-refresher when it spawns
+        # `claude -p "/usage"` to refresh the plan-usage cache — that
+        # subprocess is a real Claude Code session and would otherwise report
+        # status here under a ".vibemon" project (its cwd). Checked only after
+        # argv dispatch so explicit `--status`/`--lock` commands still run.
+        debug_log("Hook suppressed (VIBEMON_SUPPRESS_HOOKS=1)")
+        return
+
     # Read and parse input once
     input_raw = read_input()
     data = parse_json(input_raw)
 
     # Extract fields from parsed data
     event_name = data.get("hook_event_name", "") or argv_event or "Unknown"
+    if not isinstance(event_name, str):
+        return
     if event_aliases:
         event_name = event_aliases.get(event_name, event_name)
     tool_name = data.get("tool_name", "")
     cwd = data.get("cwd", "")
     transcript_path = data.get("transcript_path", "")
     permission_mode = data.get("permission_mode", "default")
+    tool_name = tool_name if isinstance(tool_name, str) else ""
+    cwd = cwd if isinstance(cwd, str) else ""
+    transcript_path = transcript_path if isinstance(transcript_path, str) else ""
 
     # A session working inside ~/.vibemon is VibeMon's own plumbing (the
     # `claude -p "/usage"` subprocess usage.py spawns with that cwd), never a
@@ -1204,3 +1255,8 @@ def run(
     debug_log(f"Payload: {json.dumps(payload)}")
 
     send_to_all(payload, event_name == start_event)
+
+
+if __name__ == "__main__":
+    result = handle_command(sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else False
+    sys.exit(0 if result else 1)

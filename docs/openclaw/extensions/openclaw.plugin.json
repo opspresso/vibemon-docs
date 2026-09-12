@@ -15,11 +15,15 @@
       "character": {
         "type": "string",
         "default": "claw",
-        "description": "Character to display (vibemon, clawd, codex, kiro, claw, daangni)"
+        "description": "Character to display (vibemon, clawd, codex, kiro, claw, opencode, daangni)"
       },
       "serialEnabled": {
         "type": "boolean",
         "description": "Enable serial output to ESP32 (unset: on when serial_port is set in ~/.vibemon/config.json)"
+      },
+      "serialPort": {
+        "type": ["string", "null"],
+        "description": "ESP32 serial port, wildcard supported (unset: serial_port from ~/.vibemon/config.json)"
       },
       "httpEnabled": {
         "type": "boolean",
@@ -57,11 +61,16 @@
     },
     "character": {
       "label": "Character",
-      "help": "vibemon (purple), clawd (orange), codex (blue), kiro (white), claw (red), daangni (peach)"
+      "help": "vibemon (purple), clawd (orange), codex (blue), kiro (white), claw (red), opencode (green), daangni (peach)"
     },
     "serialEnabled": {
       "label": "Serial Output",
       "help": "Send status to ESP32 via USB serial (leave unset to follow ~/.vibemon/config.json)"
+    },
+    "serialPort": {
+      "label": "Serial Port",
+      "help": "ESP32 serial port, wildcard supported (leave unset to follow ~/.vibemon/config.json)",
+      "advanced": true
     },
     "httpEnabled": {
       "label": "HTTP Output",
