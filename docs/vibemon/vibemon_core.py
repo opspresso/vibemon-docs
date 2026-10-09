@@ -28,6 +28,8 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from account_context import cloud_context, project_cache_key
+from http_client import open_credential_request
 from usage_cache import get_fresh_provider, load_usage_cache, model_week_bucket
 
 try:
@@ -290,7 +292,7 @@ def get_state(
     return state
 
 
-def get_project_metadata(project: str) -> dict[str, Any]:
+def get_project_metadata(project: str, cwd: str | None = None) -> dict[str, Any]:
     """Get model and memory from cache for a project.
 
     Entries older than CACHE_STALE_SECONDS are treated as unknown (empty
@@ -314,7 +316,7 @@ def get_project_metadata(project: str) -> dict[str, Any]:
 
     if not isinstance(cache, dict):
         return {}
-    entry = cache.get(project, {})
+    entry = cache.get(project_cache_key(project, cwd=cwd), {})
     if not isinstance(entry, dict):
         return {}
 
@@ -361,7 +363,7 @@ def _reverse_jsonl(path: str):
         return
 
 
-def get_codex_context_usage(data: dict[str, Any]) -> int:
+def get_codex_context_usage(data: dict[str, Any]) -> int | None:
     """Return the active Codex thread's context-window usage percentage."""
     transcript_path = data.get("transcript_path") or data.get("transcriptPath")
     if not isinstance(transcript_path, str) or not os.path.isfile(transcript_path):
@@ -373,13 +375,13 @@ def get_codex_context_usage(data: dict[str, Any]) -> int:
             or os.environ.get("CODEX_THREAD_ID")
         )
         if not isinstance(thread_id, str) or not thread_id:
-            return 0
+            return None
         matches = glob.glob(
             os.path.join(CODEX_SESSIONS_DIR, "**", f"*{thread_id}.jsonl"),
             recursive=True,
         )
         if not matches:
-            return 0
+            return None
         transcript_path = max(matches, key=os.path.getmtime)
 
     for entry in _reverse_jsonl(transcript_path):
@@ -396,16 +398,17 @@ def get_codex_context_usage(data: dict[str, Any]) -> int:
             continue
         total_tokens = usage.get("total_tokens")
         context_window = info.get("model_context_window")
-        if not isinstance(total_tokens, (int, float)) or not math.isfinite(total_tokens):
+        if not isinstance(total_tokens, (int, float)) or isinstance(total_tokens, bool) or not math.isfinite(total_tokens) or total_tokens < 0:
             continue
         if (
             not isinstance(context_window, (int, float))
+            or isinstance(context_window, bool)
             or not math.isfinite(context_window)
             or context_window <= 0
         ):
             continue
         return max(0, min(100, int(total_tokens * 100 / context_window)))
-    return 0
+    return None
 
 
 def _resets_in_minutes(entry: dict[str, Any]) -> int | None:
@@ -737,7 +740,7 @@ def send_http_get(url: str, endpoint: str) -> tuple[bool, str | None]:
         return False, None
 
 
-def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
+def send_vibemon_api(url: str, token: str, payload: dict[str, Any], context: dict | None = None) -> bool:
     """Send status to VibeMon API with Bearer token authentication.
 
     API: POST /api/status
@@ -754,12 +757,12 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
             "project": payload.get("project", ""),
             "tool": payload.get("tool", ""),
             "model": payload.get("model", ""),
-            "memory": payload.get("memory", 0),
             "character": payload.get("character", ""),
         }
         # Plan-usage fields are optional; include only when available so the API
         # REMOVEs stale values instead of overwriting them with 0.
         for key in (
+            "memory",
             "usage5h",
             "usageWeek",
             "usage5hResetsIn",
@@ -768,8 +771,9 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
             "usageWeekModelResetsIn",
             "usageWeekModelLabel",
         ):
-            if key in payload:
+            if payload.get(key) is not None:
                 api_body[key] = payload[key]
+        api_body.update(context or cloud_context(str(payload.get("character", "vibemon")), str(payload.get("project", ""))))
         api_payload = json.dumps(api_body)
 
         req = Request(
@@ -782,11 +786,11 @@ def send_vibemon_api(url: str, token: str, payload: dict[str, Any]) -> bool:
             method="POST",
         )
 
-        with urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
+        with open_credential_request(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
             debug_log(f"VibeMon API response: {response.status}")
             return 200 <= response.status < 300
     except (URLError, TimeoutError, OSError) as e:
-        debug_log(f"VibeMon API error: {e}")
+        debug_log(f"VibeMon API error: {type(e).__name__}")
         return False
 
 
@@ -1079,7 +1083,7 @@ def get_desktop_url(http_urls: tuple[str, ...]) -> str | None:
     return None
 
 
-def send_to_all(payload: dict[str, Any], is_start: bool = False) -> None:
+def send_to_all(payload: dict[str, Any], is_start: bool = False, context: dict | bool | None = None) -> None:
     """Send payload to all configured targets concurrently."""
     config = get_config()
 
@@ -1116,12 +1120,12 @@ def send_to_all(payload: dict[str, Any], is_start: bool = False) -> None:
         tasks.append(("USB serial", lambda p=port: send_serial(p, payload_str)))
 
     # Add VibeMon API target if configured
-    if config.vibemon_url and config.vibemon_token and payload.get("project"):
+    if context is not False and config.vibemon_url and config.vibemon_token and payload.get("project"):
         tasks.append(
             (
                 "VibeMon API",
                 lambda: send_vibemon_api(
-                    config.vibemon_url, config.vibemon_token, payload
+                    config.vibemon_url, config.vibemon_token, payload, context
                 ),
             )
         )
@@ -1252,9 +1256,13 @@ def run(
     debug_log(f"Event: {event_name}, Tool: {tool_name}, Project: {project_name}")
 
     payload = build_payload(state, tool_name, project_name, data)
-    debug_log(f"Payload: {json.dumps(payload)}")
 
-    send_to_all(payload, event_name == start_event)
+    try:
+        context = cloud_context(str(payload.get("character", "vibemon")), project_name, cwd)
+    except ValueError:
+        print("[vibemon] Invalid account configuration; cloud reporting disabled for this event", file=sys.stderr)
+        context = False
+    send_to_all(payload, event_name == start_event, context)
 
 
 if __name__ == "__main__":

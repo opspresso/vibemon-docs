@@ -1,0 +1,47 @@
+name: Verify canonical snapshot
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: mirror
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Read pinned source
+        id: source
+        run: |
+          node --input-type=module - <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const source = JSON.parse(readFileSync('mirror/mirror-source.json', 'utf8'));
+          if (source.repository !== 'opspresso/vibemon-web' || !/^[a-f0-9]{40}$/.test(source.revision) || !['docs', 'static'].includes(source.kind)) throw new Error('Invalid mirror source');
+          appendFileSync(process.env.GITHUB_OUTPUT, `revision=${source.revision}\nkind=${source.kind}\n`);
+          NODE
+      - name: Require private canonical access
+        env:
+          SOURCE_TOKEN: ${{ secrets.VIBEMON_WEB_READ_TOKEN }}
+        run: |
+          if [ -z "$SOURCE_TOKEN" ]; then
+            echo 'Configure VIBEMON_WEB_READ_TOKEN with read-only contents access to opspresso/vibemon-web.'
+            exit 1
+          fi
+      - uses: actions/checkout@v6
+        with:
+          repository: opspresso/vibemon-web
+          ref: ${{ steps.source.outputs.revision }}
+          token: ${{ secrets.VIBEMON_WEB_READ_TOKEN }}
+          path: canonical
+          persist-credentials: false
+      - name: Compare published snapshot
+        env:
+          MIRROR_KIND: ${{ steps.source.outputs.kind }}
+        run: node canonical/scripts/sync-legacy.mjs --kind "$MIRROR_KIND" --target mirror

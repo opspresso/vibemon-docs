@@ -27,7 +27,7 @@ try:
 except ImportError:
     print(
         "[vibemon] vibemon_core.py not found — re-run the installer: "
-        "curl -fsSL https://docs.vibemon.io/install.py | python3",
+        "curl -fsSL https://vibemon.io/install/install.py | python3",
         file=sys.stderr,
     )
     sys.exit(0)
@@ -57,7 +57,7 @@ def build_payload(
     state: str, tool: str, project: str, data: dict[str, Any]
 ) -> dict[str, Any]:
     """Build payload dict for sending to monitor."""
-    metadata = core.get_project_metadata(project)
+    metadata = core.get_project_metadata(project, data.get("cwd"))
     usage = core.get_usage_metadata()
 
     return {
@@ -65,7 +65,7 @@ def build_payload(
         "tool": tool,
         "project": project,
         "model": metadata.get("model", ""),
-        "memory": metadata.get("memory", 0),
+        **({"memory": metadata["memory"]} if metadata.get("memory") is not None else {}),
         "character": CHARACTER,
         "terminalId": core.get_terminal_id(),
         **usage,

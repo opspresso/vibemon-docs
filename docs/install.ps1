@@ -13,13 +13,13 @@
   both problems.
 
 .EXAMPLE
-  irm https://docs.vibemon.io/install.ps1 | iex
+  irm https://vibemon.io/install/install.ps1 | iex
 
 .EXAMPLE
-  & ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --claude --token my_token
+  & ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --claude --token my_token
 
 .EXAMPLE
-  & ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --uninstall --claude
+  & ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --uninstall --claude
 #>
 
 function Install-VibeMon {
@@ -28,7 +28,7 @@ function Install-VibeMon {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
-    $docsBaseUrl = 'https://docs.vibemon.io'
+    $docsBaseUrl = 'https://vibemon.io/install'
 
     # Windows PowerShell 5.1 still negotiates SSL3/TLS1.0 by default on some
     # builds, which docs.vibemon.io refuses.

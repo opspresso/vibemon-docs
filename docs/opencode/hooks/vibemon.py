@@ -29,7 +29,7 @@ try:
 except ImportError:
     print(
         "[vibemon] vibemon_core.py not found — re-run the installer: "
-        "curl -fsSL https://docs.vibemon.io/install.py | python3",
+        "curl -fsSL https://vibemon.io/install/install.py | python3",
         file=sys.stderr,
     )
     sys.exit(0)
@@ -62,7 +62,6 @@ def build_payload(
         "tool": tool,
         "project": project,
         "model": model_name if isinstance(model_name, str) else "",
-        "memory": 0,
         "character": CHARACTER,
         "terminalId": core.get_terminal_id(),
     }

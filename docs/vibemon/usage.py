@@ -30,7 +30,12 @@ Prints the resulting usage cache JSON to stdout. Exit code 0 on success
 
 from __future__ import annotations
 
+from account_context import cache_key
+from cache_io import cache_lock
+from http_client import open_credential_request
+
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -42,7 +47,6 @@ import urllib.request
 from typing import Any
 
 from usage_cache import (
-    apply_session_floor,
     build_bucket,
     get_fresh_provider,
     is_usage_bucket,
@@ -52,10 +56,6 @@ from usage_cache import (
     week_bucket_key,
 )
 
-try:
-    import fcntl
-except ImportError:  # Windows
-    fcntl = None
 
 # The Desktop app runs this refresher on a schedule; without CREATE_NO_WINDOW
 # every helper process pops a console window on Windows.
@@ -65,10 +65,10 @@ CLAUDE_TIMEOUT_SECONDS = 30
 CLAUDE_TOKEN_TIMEOUT_SECONDS = 3
 CLAUDE_API_TIMEOUT_SECONDS = 8
 CLAUDE_USAGE_API_URL = "https://api.anthropic.com/api/oauth/usage"
-CLAUDE_CREDENTIALS_FILE = os.path.expanduser("~/.claude/.credentials.json")
+CLAUDE_CREDENTIALS_FILE = os.path.join(os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"), ".credentials.json")
 
-CODEX_AUTH_FILE = os.path.expanduser("~/.codex/auth.json")
-CODEX_SESSIONS_DIR = os.path.expanduser("~/.codex/sessions")
+CODEX_AUTH_FILE = os.path.join(os.path.expanduser(os.environ.get("CODEX_HOME") or "~/.codex"), "auth.json")
+CODEX_SESSIONS_DIR = os.path.join(os.path.expanduser(os.environ.get("CODEX_HOME") or "~/.codex"), "sessions")
 CODEX_USAGE_API_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_FIVE_HOUR_MAX_SECONDS = 6 * 3600
 CODEX_WEEK_MIN_SECONDS = 6 * 86400
@@ -107,7 +107,7 @@ def available_providers(cache: dict[str, Any] | None = None) -> set[str]:
     """Return providers that have a local client/source or existing cache."""
     providers = {
         name for name in ("claude", "codex")
-        if isinstance(cache, dict) and isinstance(cache.get(name), dict)
+        if isinstance(cache, dict) and isinstance(cache.get(cache_key(name)), dict)
     }
     if shutil.which("claude") or os.path.isfile(CLAUDE_CREDENTIALS_FILE):
         providers.add("claude")
@@ -136,10 +136,10 @@ def read_claude_token() -> str | None:
     file (~/.claude/.credentials.json) for non-macOS installs and manual
     migrations that use the same token shape.
     """
-    if sys.platform == "darwin":
+    if sys.platform == "darwin" and (not os.environ.get("CLAUDE_CONFIG_DIR") or os.environ.get("CLAUDE_KEYCHAIN_SERVICE")):
         try:
             raw = subprocess.run(
-                ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                ["security", "find-generic-password", "-s", os.environ.get("CLAUDE_KEYCHAIN_SERVICE", "Claude Code-credentials"), "-w"],
                 capture_output=True,
                 text=True,
                 timeout=CLAUDE_TOKEN_TIMEOUT_SECONDS,
@@ -181,7 +181,7 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=CLAUDE_API_TIMEOUT_SECONDS) as resp:
+        with open_credential_request(request, timeout=CLAUDE_API_TIMEOUT_SECONDS) as resp:
             data = json.loads(resp.read())
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
         return None
@@ -296,7 +296,7 @@ def fetch_codex_usage_live() -> dict[str, Any] | None:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=CLAUDE_API_TIMEOUT_SECONDS) as resp:
+        with open_credential_request(request, timeout=CLAUDE_API_TIMEOUT_SECONDS) as resp:
             data = json.loads(resp.read())
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
         return None
@@ -428,61 +428,51 @@ def refresh_usage(providers: set[str] | None = None) -> str:
     "failed" (neither provider produced usable data), or "failed-to-save".
     """
     requested = providers or {"claude", "codex"}
-    lockfile = f"{get_usage_cache_path()}.refresh.lock"
-    lock_fd = None
+    identity = hashlib.sha256("\0".join(cache_key(provider) for provider in sorted(requested)).encode()).hexdigest()
+    lockfile = f"{get_usage_cache_path()}.{identity}.refresh.lock"
     claude_usage: dict[str, Any] | None = None
     codex_usage: dict[str, Any] | None = None
     try:
-        os.makedirs(os.path.dirname(lockfile), exist_ok=True)
-        if fcntl is not None:
-            lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
-                return "busy"
+        with cache_lock(lockfile, timeout=0):
+            claude_usage = fetch_claude_usage_live() if "claude" in requested else None
+            if "claude" in requested and claude_usage is None:
+                # Resolved to an absolute path first: on Windows `claude` is a
+                # `claude.cmd` npm shim, and CreateProcess only appends `.exe` to a
+                # bare name, so spawning it by name fails with FileNotFoundError.
+                claude_cli = shutil.which("claude")
+                try:
+                    result = subprocess.run(
+                        [claude_cli or "claude", "-p", "/usage"],
+                        capture_output=True,
+                        text=True,
+                        timeout=CLAUDE_TIMEOUT_SECONDS,
+                        creationflags=NO_WINDOW_FLAGS,
+                        # This subprocess is a real Claude Code session; without the
+                        # flag its installed hooks would report a phantom project.
+                        env={**os.environ, "VIBEMON_SUPPRESS_HOOKS": "1"},
+                    )
+                    claude_usage = parse_usage_output(result.stdout) or None
+                except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                    claude_usage = None
 
-        claude_usage = fetch_claude_usage_live() if "claude" in requested else None
-        if "claude" in requested and claude_usage is None:
-            # Resolved to an absolute path first: on Windows `claude` is a
-            # `claude.cmd` npm shim, and CreateProcess only appends `.exe` to a
-            # bare name, so spawning it by name fails with FileNotFoundError.
-            claude_cli = shutil.which("claude")
-            try:
-                result = subprocess.run(
-                    [claude_cli or "claude", "-p", "/usage"],
-                    capture_output=True,
-                    text=True,
-                    timeout=CLAUDE_TIMEOUT_SECONDS,
-                    creationflags=NO_WINDOW_FLAGS,
-                    # This subprocess is a real Claude Code session; without the
-                    # flag its installed hooks would report a phantom project.
-                    env={**os.environ, "VIBEMON_SUPPRESS_HOOKS": "1"},
-                )
-                claude_usage = parse_usage_output(result.stdout) or None
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                claude_usage = None
+            if "codex" in requested:
+                codex_usage = fetch_codex_usage_live() or get_codex_usage_from_sessions()
+            if not claude_usage and not codex_usage:
+                return "failed"
 
-        if "codex" in requested:
-            codex_usage = fetch_codex_usage_live() or get_codex_usage_from_sessions()
-    finally:
-        if lock_fd is not None:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
-            except OSError:
-                pass
-
-    if not claude_usage and not codex_usage:
+            cache: dict[str, Any] = {}
+            if claude_usage:
+                cache["claude"] = claude_usage
+            if codex_usage:
+                cache["codex"] = codex_usage
+            if not save_usage_cache(cache):
+                return "failed-to-save"
+            return "refreshed"
+    except BlockingIOError:
+        return "busy"
+    except OSError:
         return "failed"
 
-    cache: dict[str, Any] = {}
-    if claude_usage:
-        cache["claude"] = apply_session_floor(claude_usage)
-    if codex_usage:
-        cache["codex"] = codex_usage
-    if not save_usage_cache(cache):
-        return "failed-to-save"
-    return "refreshed"
 
 
 # ============================================================================
@@ -511,7 +501,7 @@ def main() -> int:
         now = time.time()
         providers_to_refresh = set()
         for name in candidates:
-            original = cache.get(name)
+            original = cache.get(cache_key(name))
             fresh = get_fresh_provider(cache, name, args.max_age, now=now)
             if not isinstance(original, dict) or fresh is None:
                 providers_to_refresh.add(name)

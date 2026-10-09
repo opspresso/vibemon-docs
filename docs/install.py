@@ -5,23 +5,23 @@ Installs hooks and configuration for Claude Code, Codex, Kiro IDE, OpenClaw, or
 opencode.
 
 Usage (Interactive):
-  curl -fsSL https://docs.vibemon.io/install.py | python3
+  curl -fsSL https://vibemon.io/install/install.py | python3
 
 Usage (Non-interactive for AI agents):
-  curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude
-  curl -fsSL https://docs.vibemon.io/install.py | python3 - --codex
-  curl -fsSL https://docs.vibemon.io/install.py | python3 - --kiro
-  curl -fsSL https://docs.vibemon.io/install.py | python3 - --openclaw
-  curl -fsSL https://docs.vibemon.io/install.py | python3 - --opencode
-  curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token YOUR_TOKEN
-  curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
+  curl -fsSL https://vibemon.io/install/install.py | python3 - --claude
+  curl -fsSL https://vibemon.io/install/install.py | python3 - --codex
+  curl -fsSL https://vibemon.io/install/install.py | python3 - --kiro
+  curl -fsSL https://vibemon.io/install/install.py | python3 - --openclaw
+  curl -fsSL https://vibemon.io/install/install.py | python3 - --opencode
+  curl -fsSL https://vibemon.io/install/install.py | python3 - --claude --token YOUR_TOKEN
+  curl -fsSL https://vibemon.io/install/install.py | python3 - --all --yes
 
 Usage (Windows PowerShell):
-  irm https://docs.vibemon.io/install.ps1 | iex
-  & ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --claude
+  irm https://vibemon.io/install/install.ps1 | iex
+  & ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --claude
 
 Uninstall:
-  curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
+  curl -fsSL https://vibemon.io/install/install.py | python3 - --uninstall --claude
 
 Exit status is 0 only when every selected platform installed cleanly. A
 platform whose tool isn't present is reported as skipped and does not fail a
@@ -36,6 +36,7 @@ against the manifest's "installer" hash before running it.
 import argparse
 import difflib
 import hashlib
+import getpass
 import json
 import os
 import re
@@ -116,7 +117,7 @@ def setup_tty_input():
             pass
 
 # VibeMon install files base URL
-DOCS_BASE_URL = "https://docs.vibemon.io"
+DOCS_BASE_URL = "https://vibemon.io/install"
 
 # Shared configuration example file
 CONFIG_EXAMPLE_FILE = "vibemon/config.example.json"
@@ -210,7 +211,7 @@ def configure_token(config: dict, cli_token: str = None) -> dict:
     current_token = config.get("vibemon_token", "")
 
     print(f"\n{colored('VibeMon API Token Configuration:', 'cyan')}")
-    print("  Create your own token (8-64 chars, a-z, 0-9, _, -)")
+    print("  Create a write token at https://vibemon.io/account")
 
     # If token provided via CLI, use it directly
     if cli_token:
@@ -231,7 +232,7 @@ def configure_token(config: dict, cli_token: str = None) -> dict:
         print(f"  Current token: {colored(mask_token(current_token), 'yellow')}")
         if ask_yes_no("  Change token?", default=False):
             try:
-                new_token = input("  Enter new token: ").strip()
+                new_token = getpass.getpass("  Enter new token: ").strip()
                 if new_token:
                     warn_if_invalid_token(new_token)
                     config["vibemon_token"] = new_token
@@ -245,7 +246,7 @@ def configure_token(config: dict, cli_token: str = None) -> dict:
     else:
         print(f"  No token configured.")
         try:
-            token = input("  Enter token (or press Enter to skip): ").strip()
+            token = getpass.getpass("  Enter token (or press Enter to skip): ").strip()
             if token:
                 warn_if_invalid_token(token)
                 config["vibemon_token"] = token
@@ -1037,9 +1038,18 @@ def install_vibemon_shared(source: FileSource) -> bool:
     if "shared_installed" in VIBEMON_CONFIG_CACHE:
         return VIBEMON_CONFIG_CACHE["shared_installed"]
 
-    # usage.py -> ~/.vibemon/usage.py
+    content = source.get_file("vibemon/http_client.py")
+    ok = write_file_with_diff(Path.home() / ".vibemon" / "http_client.py", content, "~/.vibemon/http_client.py")
+
+    content = source.get_file("vibemon/cache_io.py")
+    ok = write_file_with_diff(Path.home() / ".vibemon" / "cache_io.py", content, "~/.vibemon/cache_io.py") and ok
+
+    content = source.get_file("vibemon/account_context.py")
+    ok = write_file_with_diff(Path.home() / ".vibemon" / "account_context.py", content, "~/.vibemon/account_context.py") and ok
+
+    # Install the refresher only after its account-identity dependency.
     content = source.get_file("vibemon/usage.py")
-    ok = write_file_with_diff(Path.home() / ".vibemon" / "usage.py", content, "~/.vibemon/usage.py", executable=True)
+    ok = write_file_with_diff(Path.home() / ".vibemon" / "usage.py", content, "~/.vibemon/usage.py", executable=True) and ok
 
     # usage_cache.py -> ~/.vibemon/usage_cache.py
     content = source.get_file("vibemon/usage_cache.py")
@@ -1606,7 +1616,7 @@ def install_openclaw(source: FileSource, cli_token: str = None) -> bool:
     print("  • http_urls:     Desktop App URLs (auto-managed by the Desktop app)")
     print("  • serial_port:   set to send status to ESP32 via USB")
     print("  • vibemon_url:   VibeMon cloud service URL (https://vibemon.io)")
-    print("  • vibemon_token: Your token (8-64 chars, a-z, 0-9, _, -)")
+    print("  • vibemon_token: Generated write token from https://vibemon.io/account")
     print(f"\n{colored('Overrides (optional, in ~/.openclaw/openclaw.json plugin config):', 'yellow')}")
     print("  • projectName, character, httpEnabled, httpUrls, serialEnabled,")
     print("    vibemonUrl, vibemonToken, autoLaunch, debug")
@@ -1892,7 +1902,7 @@ def uninstall_vibemon(source: FileSource = None, cli_token: str = None) -> bool:
         return SKIPPED
 
     print(f"\n{colored('Removing VibeMon shared scripts...', 'cyan')}\n")
-    for name in ("usage.py", "usage_cache.py", "vibemon_core.py"):
+    for name in ("usage.py", "usage_cache.py", "http_client.py", "cache_io.py", "account_context.py", "vibemon_core.py"):
         remove_path(vibemon_home / name, f"~/.vibemon/{name}")
     # config.json holds the user's token and statusline.json their display
     # preferences; deleting either would make a reinstall lose real settings.
@@ -1927,22 +1937,22 @@ def parse_args():
         epilog="""
 Examples:
   Interactive mode:
-    curl -fsSL https://docs.vibemon.io/install.py | python3
+    curl -fsSL https://vibemon.io/install/install.py | python3
 
   Non-interactive (for AI agents):
-    curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude
-    curl -fsSL https://docs.vibemon.io/install.py | python3 - --codex
-    curl -fsSL https://docs.vibemon.io/install.py | python3 - --opencode
-    curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_token
-    curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
+    curl -fsSL https://vibemon.io/install/install.py | python3 - --claude
+    curl -fsSL https://vibemon.io/install/install.py | python3 - --codex
+    curl -fsSL https://vibemon.io/install/install.py | python3 - --opencode
+    curl -fsSL https://vibemon.io/install/install.py | python3 - --claude --token my_token
+    curl -fsSL https://vibemon.io/install/install.py | python3 - --all --yes
 
   Windows PowerShell:
-    irm https://docs.vibemon.io/install.ps1 | iex
-    & ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --claude
+    irm https://vibemon.io/install/install.ps1 | iex
+    & ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --claude
 
   Uninstall:
-    curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
-    curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --all
+    curl -fsSL https://vibemon.io/install/install.py | python3 - --uninstall --claude
+    curl -fsSL https://vibemon.io/install/install.py | python3 - --uninstall --all
 
 Exit status is 0 only when every selected platform succeeded. A platform whose
 tool isn't installed is reported as skipped and does not fail a run where

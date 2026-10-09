@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
+from account_context import cache_key
+
 import json
-import os
+import math
 import re
 import time
 from datetime import datetime
 from typing import Any
 
-try:
-    import fcntl
-except ImportError:  # Windows
-    fcntl = None
+from cache_io import update_json_cache
 
 
 def parse_epoch(value: Any) -> float | None:
@@ -34,10 +33,13 @@ def parse_epoch(value: Any) -> float | None:
 
 
 def normalize_percent(value: Any) -> int | None:
-    try:
-        return max(0, min(100, round(float(value))))
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
         return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return round(number) if math.isfinite(number) and 0 <= number <= 100 else None
 
 
 def is_usage_bucket(name: Any) -> bool:
@@ -149,20 +151,6 @@ def parse_usage_output(text: str) -> dict[str, Any]:
     return result
 
 
-def apply_session_floor(usage: dict[str, Any]) -> dict[str, Any]:
-    session = usage.get("session")
-    week = usage.get("week_all")
-    if (
-        isinstance(week, dict)
-        and isinstance(week.get("pct"), int)
-        and week["pct"] >= 1
-        and isinstance(session, dict)
-        and session.get("pct") == 0
-    ):
-        return {**usage, "session": {**session, "pct": 1}}
-    return usage
-
-
 def load_usage_cache(cache_path: str) -> dict[str, Any] | None:
     try:
         with open(cache_path, encoding="utf-8") as f:
@@ -175,7 +163,7 @@ def load_usage_cache(cache_path: str) -> dict[str, Any] | None:
 def provider_updated_at(cache: dict[str, Any] | None, provider: str) -> float:
     if not isinstance(cache, dict):
         return 0
-    data = cache.get(provider)
+    data = cache.get(cache_key(provider))
     if isinstance(data, dict):
         try:
             return float(data.get("updated_at", cache.get("ts", 0)))
@@ -192,7 +180,7 @@ def get_fresh_provider(
 ) -> dict[str, Any] | None:
     if not isinstance(cache, dict):
         return None
-    data = cache.get(provider)
+    data = cache.get(cache_key(provider))
     if not isinstance(data, dict):
         return None
     current_time = time.time() if now is None else now
@@ -241,19 +229,10 @@ def save_usage_cache(
     In both modes, usage buckets whose `resets_at` has already passed are
     pruned — they are dead weight the read path ignores anyway.
     """
-    lock_fd = None
-    try:
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        if fcntl is not None:
-            lock_fd = os.open(f"{cache_path}.lock", os.O_CREAT | os.O_WRONLY, 0o644)
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
-                return False
-
-        payload = dict(load_usage_cache(cache_path) or {})
+    def update(payload):
         updated_at = int(time.time() if now is None else now)
         for provider, value in updates.items():
+            provider = cache_key(provider)
             if not isinstance(value, dict):
                 continue
             existing = payload.get(provider)
@@ -276,17 +255,6 @@ def save_usage_cache(
         # Retain ts for older installed hooks; freshness decisions use the
         # provider-level updated_at above.
         payload["ts"] = updated_at
-        tmpfile = f"{cache_path}.tmp.{os.getpid()}"
-        with open(tmpfile, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-        os.replace(tmpfile, cache_path)
-        return True
-    except (IOError, OSError):
-        return False
-    finally:
-        if lock_fd is not None:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
-            except OSError:
-                pass
+        return payload
+
+    return update_json_cache(cache_path, update)

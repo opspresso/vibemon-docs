@@ -14,50 +14,50 @@ Use the non-interactive installer with your platform flag:
 
 **For Claude Code:**
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude
+curl -fsSL https://vibemon.io/install/install.py | python3 - --claude
 ```
 
 **For Codex CLI:**
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --codex
+curl -fsSL https://vibemon.io/install/install.py | python3 - --codex
 ```
 
 **For Kiro IDE:**
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --kiro
+curl -fsSL https://vibemon.io/install/install.py | python3 - --kiro
 ```
 
 **For OpenClaw:**
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --openclaw
+curl -fsSL https://vibemon.io/install/install.py | python3 - --openclaw
 ```
 
 **For opencode:**
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --opencode
+curl -fsSL https://vibemon.io/install/install.py | python3 - --opencode
 ```
 
 **With token (recommended):**
 ```bash
-# Create your own token (8-64 chars, a-z, 0-9, _, -)
+# Generate a write token at https://vibemon.io/account
 # Example: username_machine_purpose
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_workspace_01
+curl -fsSL https://vibemon.io/install/install.py | python3 - --claude --token YOUR_WRITE_TOKEN
 ```
 
 **Install for every detected tool:**
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --all
+curl -fsSL https://vibemon.io/install/install.py | python3 - --all
 ```
 
 **Skip confirmation prompts (CI/agents):**
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --all --yes
+curl -fsSL https://vibemon.io/install/install.py | python3 - --all --yes
 ```
 
 **On Windows, use PowerShell:**
 ```powershell
-& ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --claude --token my_workspace_01
-& ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --all --yes
+& ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --claude --token YOUR_WRITE_TOKEN
+& ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --all --yes
 ```
 The same flags apply. `curl ... | python3` is not usable there: Windows has no
 `python3` on `PATH`, and Windows PowerShell 5.1 re-encodes piped text with the
@@ -86,13 +86,13 @@ The installer honors `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIRO_HOME`, and `OPENCO
 ## Uninstall
 
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --claude
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --uninstall --all
+curl -fsSL https://vibemon.io/install/install.py | python3 - --uninstall --claude
+curl -fsSL https://vibemon.io/install/install.py | python3 - --uninstall --all
 ```
 
 ```powershell
 # Windows
-& ([scriptblock]::Create((irm https://docs.vibemon.io/install.ps1))) --uninstall --claude
+& ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --uninstall --claude
 ```
 
 This removes VibeMon's hook registrations, its status line, and the scripts it installed for the selected tools. Hooks you added yourself are preserved, and a `statusLine` you've since pointed at your own script is left in place. The shared scripts under `~/.vibemon` (`vibemon_core.py`, `usage.py`, `usage_cache.py`) are only removed by `--uninstall --vibemon` (or menu option 7); a per-tool uninstall such as `--uninstall --all` leaves them in place. Your settings in `~/.vibemon/config.json` and `~/.vibemon/statusline.json` are always kept so a reinstall doesn't lose your token — delete `~/.vibemon` yourself to remove those too.
@@ -104,12 +104,12 @@ This removes VibeMon's hook registrations, its status line, and the scripts it i
 If you prefer an interactive setup with prompts:
 
 ```bash
-curl -fsSL https://docs.vibemon.io/install.py | python3
+curl -fsSL https://vibemon.io/install/install.py | python3
 ```
 
 ```powershell
 # Windows
-irm https://docs.vibemon.io/install.ps1 | iex
+irm https://vibemon.io/install/install.ps1 | iex
 ```
 
 ## Manual Setup
@@ -143,11 +143,11 @@ Create `~/.vibemon/config.json` (shared by Claude Code, Codex, Kiro, the OpenCla
 Download hook files:
 ```bash
 mkdir -p ~/.claude/hooks ~/.vibemon
-curl -o ~/.claude/hooks/vibemon.py https://docs.vibemon.io/claude/hooks/vibemon.py
-curl -o ~/.claude/statusline.py https://docs.vibemon.io/claude/statusline.py
-curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
-curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
-curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
+curl -o ~/.claude/hooks/vibemon.py https://vibemon.io/install/claude/hooks/vibemon.py
+curl -o ~/.claude/statusline.py https://vibemon.io/install/claude/statusline.py
+curl -o ~/.vibemon/usage.py https://vibemon.io/install/vibemon/usage.py
+curl -o ~/.vibemon/usage_cache.py https://vibemon.io/install/vibemon/usage_cache.py
+curl -o ~/.vibemon/vibemon_core.py https://vibemon.io/install/vibemon/vibemon_core.py
 chmod +x ~/.claude/hooks/vibemon.py ~/.claude/statusline.py ~/.vibemon/usage.py
 ```
 
@@ -364,17 +364,17 @@ backgrounding the command. `install.ps1` picks the right form for you.
 - If `statusLine` key exists, ask your human before replacing
 - Keep all other existing settings unchanged
 
-Optionally, create `~/.vibemon/statusline.json` to customize the statusline's display toggles (`show_*`) and fallback `token_reset_hours` setting — see [statusline.example.json](https://docs.vibemon.io/vibemon/statusline.example.json). This file is separate from `~/.vibemon/config.json` and not required; statusline.py uses sensible defaults when it's absent.
+Optionally, create `~/.vibemon/statusline.json` to customize the statusline's display toggles (`show_*`) and fallback `token_reset_hours` setting — see [statusline.example.json](https://vibemon.io/install/vibemon/statusline.example.json). This file is separate from `~/.vibemon/config.json` and not required; statusline.py uses sensible defaults when it's absent.
 
 ### For Codex CLI (Manual)
 
 Download hook files:
 ```bash
 mkdir -p ~/.codex/hooks ~/.vibemon
-curl -o ~/.codex/hooks/vibemon.py https://docs.vibemon.io/codex/hooks/vibemon.py
-curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
-curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
-curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
+curl -o ~/.codex/hooks/vibemon.py https://vibemon.io/install/codex/hooks/vibemon.py
+curl -o ~/.vibemon/usage.py https://vibemon.io/install/vibemon/usage.py
+curl -o ~/.vibemon/vibemon_core.py https://vibemon.io/install/vibemon/vibemon_core.py
+curl -o ~/.vibemon/usage_cache.py https://vibemon.io/install/vibemon/usage_cache.py
 chmod +x ~/.codex/hooks/vibemon.py ~/.vibemon/usage.py
 ```
 
@@ -548,11 +548,11 @@ hooks.json takes a Windows-only command string, so the POSIX one stays intact:
 Download hook files:
 ```bash
 mkdir -p ~/.kiro/hooks ~/.vibemon
-curl -o ~/.kiro/hooks/vibemon.py https://docs.vibemon.io/kiro/hooks/vibemon.py
-curl -o ~/.kiro/hooks/vibemon.json https://docs.vibemon.io/kiro/hooks/vibemon.json
-curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
-curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
-curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
+curl -o ~/.kiro/hooks/vibemon.py https://vibemon.io/install/kiro/hooks/vibemon.py
+curl -o ~/.kiro/hooks/vibemon.json https://vibemon.io/install/kiro/hooks/vibemon.json
+curl -o ~/.vibemon/vibemon_core.py https://vibemon.io/install/vibemon/vibemon_core.py
+curl -o ~/.vibemon/usage_cache.py https://vibemon.io/install/vibemon/usage_cache.py
+curl -o ~/.vibemon/usage.py https://vibemon.io/install/vibemon/usage.py
 chmod +x ~/.kiro/hooks/vibemon.py ~/.vibemon/usage.py
 ```
 
@@ -605,11 +605,11 @@ after `vibemon.json` is written successfully.
 Download plugin files:
 ```bash
 mkdir -p ~/.openclaw/extensions/vibemon-bridge ~/.vibemon
-curl -o ~/.openclaw/extensions/vibemon-bridge/openclaw.plugin.json https://docs.vibemon.io/openclaw/extensions/openclaw.plugin.json
-curl -o ~/.openclaw/extensions/vibemon-bridge/index.mjs https://docs.vibemon.io/openclaw/extensions/index.mjs
-curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
-curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
-curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
+curl -o ~/.openclaw/extensions/vibemon-bridge/openclaw.plugin.json https://vibemon.io/install/openclaw/extensions/openclaw.plugin.json
+curl -o ~/.openclaw/extensions/vibemon-bridge/index.mjs https://vibemon.io/install/openclaw/extensions/index.mjs
+curl -o ~/.vibemon/vibemon_core.py https://vibemon.io/install/vibemon/vibemon_core.py
+curl -o ~/.vibemon/usage_cache.py https://vibemon.io/install/vibemon/usage_cache.py
+curl -o ~/.vibemon/usage.py https://vibemon.io/install/vibemon/usage.py
 chmod +x ~/.vibemon/usage.py
 ```
 
@@ -657,11 +657,11 @@ Download the plugin and adapter files (set `OPENCODE_HOME` to your
 ```bash
 OPENCODE_HOME="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
 mkdir -p "$OPENCODE_HOME/plugins" "$OPENCODE_HOME/hooks" ~/.vibemon
-curl -o "$OPENCODE_HOME/plugins/vibemon.js" https://docs.vibemon.io/opencode/plugin/vibemon.js
-curl -o "$OPENCODE_HOME/hooks/vibemon.py" https://docs.vibemon.io/opencode/hooks/vibemon.py
-curl -o ~/.vibemon/vibemon_core.py https://docs.vibemon.io/vibemon/vibemon_core.py
-curl -o ~/.vibemon/usage_cache.py https://docs.vibemon.io/vibemon/usage_cache.py
-curl -o ~/.vibemon/usage.py https://docs.vibemon.io/vibemon/usage.py
+curl -o "$OPENCODE_HOME/plugins/vibemon.js" https://vibemon.io/install/opencode/plugin/vibemon.js
+curl -o "$OPENCODE_HOME/hooks/vibemon.py" https://vibemon.io/install/opencode/hooks/vibemon.py
+curl -o ~/.vibemon/vibemon_core.py https://vibemon.io/install/vibemon/vibemon_core.py
+curl -o ~/.vibemon/usage_cache.py https://vibemon.io/install/vibemon/usage_cache.py
+curl -o ~/.vibemon/usage.py https://vibemon.io/install/vibemon/usage.py
 chmod +x "$OPENCODE_HOME/hooks/vibemon.py" ~/.vibemon/usage.py
 ```
 
@@ -690,43 +690,16 @@ under `~/.config/opencode`.
 
 ## Token Information
 
-**You can create your own token!** No registration required.
+1. Sign in with Google at https://vibemon.io/account.
+2. Create a named token with `write` permission for coding hooks.
+3. Create a separate `read` token for the desktop app or Web dashboard.
+4. Copy each token when it is created. The server does not show it again.
 
-### How to Create a Token
-
-1. **Choose any token you like** that follows this format:
-   - Allowed characters: `a-z`, `0-9`, `_` (underscore), `-` (hyphen)
-   - Length: 8-64 characters
-   - Examples: `my_workspace_01`, `project-alpha-token`, `dev_machine_2026`
-
-2. **Use it immediately** - tokens are auto-registered on the first status report (`POST /api/status`); read-only calls and dashboard connections do not register a token
-
-3. **Share with your human** - give them the same token to view your dashboard
-
-### Recommended Token Pattern
-
-For AI agents, use a descriptive token like:
-```
-{username}_{machine}_{purpose}
-```
-
-Examples:
-- `bruce_macbook_dev`
-- `team_alpha_staging`
-- `john_workstation_main`
-
-### View Dashboard
-
-After installation, your human can view your status at:
-```
-https://vibemon.io/?token=YOUR_TOKEN
-```
+User-chosen legacy tokens are no longer accepted. Replace the hook's `vibemon_token` value with a generated write token. The hook payload and local HTTP endpoint are unchanged. Read and write tokens share data when they belong to the same Google account. Do not share credentials with another user or put them in URLs.
 
 ## Verify Installation
 
-After setup, your status should appear on the dashboard when you start working.
-
-Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
+Start a Claude Code or Codex session. Its project and state should appear in the local App and in the same account's cloud source list. Open https://vibemon.io and enter the read token for the browser dashboard, or configure the desktop app's **Monitoring** window.
 
 ## Supported Tools
 
@@ -791,6 +764,6 @@ Dashboard URL: `https://vibemon.io/?token=YOUR_TOKEN`
 ## More Information
 
 - Dashboard: https://vibemon.io
-- Install Script: https://docs.vibemon.io/install.py
-- Windows Install Script: https://docs.vibemon.io/install.ps1
-- Setup Guide: https://docs.vibemon.io/setup.md
+- Install Script: https://vibemon.io/install/install.py
+- Windows Install Script: https://vibemon.io/install/install.ps1
+- Setup Guide: https://vibemon.io/install/setup.md

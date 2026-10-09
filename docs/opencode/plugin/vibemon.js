@@ -135,7 +135,6 @@ export const vibemon = async ({ directory, worktree }) => {
       transcript_path: "",
       permission_mode: ctx.agent === "plan" ? "plan" : "default",
       model: ctx.model || "",
-      memory: 0,
     });
   }
 

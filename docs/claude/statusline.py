@@ -16,21 +16,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-try:
-    import fcntl
-except ImportError:  # Windows
-    fcntl = None
 
 # The statusline re-renders on every tick; without CREATE_NO_WINDOW each `git`
 # call would flash a console window on Windows.
 NO_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+# Prefer the matching checkout's helpers; installed scripts use ~/.vibemon.
 VIBEMON_HOME = Path.home() / ".vibemon"
-if str(VIBEMON_HOME) not in sys.path:
-    sys.path.insert(0, str(VIBEMON_HOME))
+for helper_dir in (Path(__file__).resolve().parent.parent / "vibemon", VIBEMON_HOME):
+    if (helper_dir / "usage_cache.py").is_file():
+        sys.path.insert(0, str(helper_dir))
+        break
+
+from cache_io import update_json_cache
 
 from usage_cache import (  # noqa: E402
-    apply_session_floor,
+    normalize_percent,
     load_usage_cache as _load_usage_cache,
     model_week_bucket,
     save_usage_cache as _save_usage_cache,
@@ -144,7 +145,6 @@ SHOW_STATUSLINE = _show_flag("VIBEMON_SHOW_STATUSLINE", True)
 
 # Lock file timeout constants
 LOCK_TIMEOUT_SECONDS = 5
-LOCK_RETRY_INTERVAL = 0.05
 
 # ============================================================================
 # Utility Functions
@@ -346,52 +346,33 @@ def get_git_info(directory: str) -> str:
 
 
 def get_context_usage(data: dict[str, Any]) -> str:
-    """Calculate context window usage percentage.
-
-    Args:
-        data: Pre-parsed JSON dictionary
-    """
-    context_window = data.get("context_window", {})
-    if not isinstance(context_window, dict):
+    """Return measured context utilization, or an empty display for unknown."""
+    window = data.get("context_window")
+    if not isinstance(window, dict):
         return ""
-
-    # Try pre-calculated percentage first
-    used_pct = context_window.get("used_percentage", 0)
-
-    if used_pct and used_pct != "null":
-        try:
-            pct = float(used_pct)
-            if pct > 0:
-                return f"{int(pct)}%"
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback: calculate from current_usage
-    try:
-        context_size = int(context_window.get("context_window_size", 0) or 0)
-        if context_size <= 0:
-            return ""
-
-        current_usage = context_window.get("current_usage", {})
-        if not isinstance(current_usage, dict):
-            return ""
-
-        input_tokens = int(current_usage.get("input_tokens", 0) or 0)
-        cache_creation = int(current_usage.get("cache_creation_input_tokens", 0) or 0)
-        cache_read = int(current_usage.get("cache_read_input_tokens", 0) or 0)
-
-        current_tokens = input_tokens + cache_creation + cache_read
-        if current_tokens > 0:
-            return f"{current_tokens * 100 // context_size}%"
-    except (ValueError, TypeError):
-        pass
-
-    return ""
+    percent = normalize_percent(window.get("used_percentage"))
+    if percent is not None:
+        return f"{percent}%"
+    usage = window.get("current_usage")
+    size = window.get("context_window_size")
+    if not isinstance(usage, dict) or not isinstance(size, (int, float)) or isinstance(size, bool) or size <= 0:
+        return ""
+    keys = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    if not any(key in usage for key in keys):
+        return ""
+    values = [usage.get(key, 0) for key in keys]
+    if any(not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0 for value in values):
+        return ""
+    percent = normalize_percent(sum(values) * 100 / size)
+    return f"{percent}%" if percent is not None else ""
 
 
 # ============================================================================
 # VibeMon Cache Functions
 # ============================================================================
+
+
+from account_context import project_cache_key, cache_key
 
 
 def get_cache_path() -> str:
@@ -402,53 +383,16 @@ def get_cache_path() -> str:
     return os.path.expanduser(cache_path)
 
 
-def save_to_cache(project: str, model: str, memory: int) -> None:
-    """Save project metadata to cache file.
-
-    Uses fcntl for proper file locking to avoid race conditions (skipped on
-    platforms without fcntl, e.g. Windows; the atomic os.replace below still
-    prevents file corruption there, at the cost of possible lost updates
-    under concurrent writers).
-    """
+def save_to_cache(project: str, model: str, memory: int | None, cwd: str | None = None) -> None:
+    """Save scoped context under the shared cross-process cache lock."""
     if not project:
         return
 
+    project = project_cache_key(project, cwd=cwd)
     cache_path = get_cache_path()
-    cache_dir = os.path.dirname(cache_path)
     timestamp = int(time.time())
-    lock_fd = None
 
-    try:
-        # Ensure cache directory exists
-        os.makedirs(cache_dir, exist_ok=True)
-
-        if fcntl is not None:
-            # Use fcntl for proper file locking (atomic, no race condition)
-            lockfile = f"{cache_path}.lock"
-            lock_fd = os.open(lockfile, os.O_CREAT | os.O_WRONLY, 0o644)
-
-            # Try to acquire lock with timeout
-            start_time = time.monotonic()
-            while True:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break  # Lock acquired
-                except (IOError, OSError):
-                    if time.monotonic() - start_time > LOCK_TIMEOUT_SECONDS:
-                        return  # Timeout - skip cache update
-                    time.sleep(LOCK_RETRY_INTERVAL)
-
-        # Read existing cache or create empty object
-        cache: dict[str, Any] = {}
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, encoding="utf-8") as f:
-                    cache = json.load(f)
-            except (json.JSONDecodeError, IOError):
-                cache = {}
-            if not isinstance(cache, dict):
-                cache = {}
-
+    def update(cache):
         # If new project and cache is full, remove oldest to make room
         if project not in cache and len(cache) >= VIBE_MONITOR_MAX_PROJECTS:
             # Sort by timestamp and remove oldest
@@ -462,21 +406,9 @@ def save_to_cache(project: str, model: str, memory: int) -> None:
         # Update cache with new project data
         cache[project] = {"model": model, "memory": memory, "ts": timestamp}
 
-        # Atomic write: write to temp file, then rename
-        tmpfile = f"{cache_path}.tmp.{os.getpid()}"
-        with open(tmpfile, "w", encoding="utf-8") as f:
-            json.dump(cache, f)
-        os.replace(tmpfile, cache_path)  # os.replace is atomic on POSIX
+        return cache
 
-    except (IOError, OSError):
-        pass
-    finally:
-        if lock_fd is not None:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
-            except OSError:
-                pass
+    update_json_cache(cache_path, update, timeout=LOCK_TIMEOUT_SECONDS)
 
 
 # ============================================================================
@@ -945,7 +877,7 @@ def build_statusline(
 # ============================================================================
 
 
-def save_cache_background(project: str, model: str, memory: int) -> None:
+def save_cache_background(project: str, model: str, memory: int | None, cwd: str | None = None) -> None:
     """Save to cache in background process.
 
     Uses fork on POSIX systems for efficiency, falls back to synchronous
@@ -953,7 +885,7 @@ def save_cache_background(project: str, model: str, memory: int) -> None:
     """
     # Check if fork is available (not on Windows)
     if not hasattr(os, "fork"):
-        save_to_cache(project, model, memory)
+        save_to_cache(project, model, memory, cwd)
         return
 
     try:
@@ -962,14 +894,14 @@ def save_cache_background(project: str, model: str, memory: int) -> None:
             # Child process - save cache and exit
             detach_stdio()
             try:
-                save_to_cache(project, model, memory)
+                save_to_cache(project, model, memory, cwd)
             except Exception:
                 pass
             os._exit(0)
         # Parent process continues immediately
     except OSError:
         # Fork failed - save synchronously
-        save_to_cache(project, model, memory)
+        save_to_cache(project, model, memory, cwd)
 
 
 # ============================================================================
@@ -1048,11 +980,10 @@ def main() -> None:
     # for older Claude Code versions.
     usage_cache = usage_from_rate_limits(data)
     if usage_cache is not None:
-        usage_cache = apply_session_floor(usage_cache)
         save_usage_cache({"claude": usage_cache})
     else:
         raw_cache = load_usage_cache()
-        usage_cache = raw_cache.get("claude") if isinstance(raw_cache, dict) else None
+        usage_cache = raw_cache.get(cache_key("claude")) if isinstance(raw_cache, dict) else None
     usage_segment = build_usage_segment(usage_cache)
 
     # Session reset countdown: prefer the real /usage reset time; fall back to
@@ -1069,8 +1000,8 @@ def main() -> None:
 
     # Save project metadata to cache in background
     # Convert "85%" to 85, "" to 0
-    memory_int = int(context_usage.rstrip("%")) if context_usage else 0
-    save_cache_background(dir_name, model_display, memory_int)
+    memory_int = int(context_usage.rstrip("%")) if context_usage else None
+    save_cache_background(dir_name, model_display, memory_int, current_dir)
 
     # Display toggle: data was collected above; only the rendered line is gated.
     if not SHOW_STATUSLINE:

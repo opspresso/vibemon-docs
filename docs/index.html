@@ -348,10 +348,10 @@
             <p class="card-desc">I want to connect to VibeMon and send my status</p>
             <div class="ai-agent-prompt">
                 <p class="ai-agent-prompt-label">Tell your AI agent:</p>
-                <code>Read https://docs.vibemon.io/setup.md and follow the instructions to join VibeMon</code>
+                <code>Read https://vibemon.io/install/setup.md and follow the instructions to join VibeMon</code>
             </div>
             <div class="card-actions">
-                <button class="card-btn" onclick="navigator.clipboard.writeText('Read https://docs.vibemon.io/setup.md and follow the instructions to join VibeMon'); this.textContent = 'Copied!'; setTimeout(() => { this.textContent = 'Copy'; }, 2000)">Copy</button>
+                <button class="card-btn" onclick="navigator.clipboard.writeText('Read https://vibemon.io/install/setup.md and follow the instructions to join VibeMon'); this.textContent = 'Copied!'; setTimeout(() => { this.textContent = 'Copy'; }, 2000)">Copy</button>
                 <a class="card-btn" href="./setup.md" target="_blank" rel="noopener noreferrer">Setup Guide</a>
             </div>
         </div>
@@ -378,7 +378,7 @@
             <a href="#apps">Apps</a>
             <a href="#api">API</a>
             <a href="#states">State Mapping</a>
-            <a href="https://github.com/opspresso/vibemon-docs">GitHub</a>
+            <a href="https://github.com/opspresso/vibemon-web">GitHub</a>
         </nav>
 
         <main class="content">
@@ -396,16 +396,16 @@ brew install opspresso/tap/vibemon</code></pre>
                 <h3>Non-interactive Install (AI agents, CI)</h3>
                 <p>For headless setups where a GUI app isn't available:</p>
                 <pre><code># Choose exactly one platform + your token
-curl -fsSL https://docs.vibemon.io/install.py | python3 - --claude --token my_token
+curl -fsSL https://vibemon.io/install/install.py | python3 - --claude --token YOUR_WRITE_TOKEN
 # --codex / --kiro / --openclaw / --opencode for other tools, --all for every detected tool</code></pre>
                 <p>Interactive prompt version:</p>
-                <pre><code>curl -fsSL https://docs.vibemon.io/install.py | python3</code></pre>
-                <p>Or point your AI agent at <a href="./setup.md">docs/setup.md</a> (<code>https://docs.vibemon.io/setup.md</code>) and have it follow the instructions directly.</p>
+                <pre><code>curl -fsSL https://vibemon.io/install/install.py | python3</code></pre>
+                <p>Or point your AI agent at <a href="./setup.md">docs/setup.md</a> (<code>https://vibemon.io/install/setup.md</code>) and have it follow the instructions directly.</p>
 
                 <h3>Local Install</h3>
-                <pre><code>git clone https://github.com/opspresso/vibemon-docs.git
-cd vibemon-docs
-python3 docs/install.py</code></pre>
+                <pre><code>git clone https://github.com/opspresso/vibemon-web.git
+cd vibemon-web
+python3 public/install/install.py</code></pre>
             </section>
 
             <section id="config">
@@ -429,7 +429,7 @@ python3 docs/install.py</code></pre>
                         <tr><td><code>http_urls</code></td><td>HTTP targets (Desktop App, ESP32 WiFi)</td><td><code>["http://127.0.0.1:19280"]</code></td></tr>
                         <tr><td><code>serial_port</code></td><td>ESP32 USB serial port (wildcard supported)</td><td><code>/dev/cu.usbmodem*</code></td></tr>
                         <tr><td><code>vibemon_url</code></td><td>VibeMon cloud API URL</td><td><code>https://vibemon.io</code></td></tr>
-                        <tr><td><code>vibemon_token</code></td><td>VibeMon API access token (from dashboard)</td><td></td></tr>
+                        <tr><td><code>vibemon_token</code></td><td>Generated write token (from /account)</td><td></td></tr>
                     </tbody>
                 </table>
                 <p>Claude Code's statusline reads a separate <code>~/.vibemon/statusline.json</code> for display toggles (e.g. <code>show_cost</code>, <code>show_git</code>, <code>show_model</code>, <code>show_tokens</code>) and the fallback <code>token_reset_hours</code> setting — see <a href="./vibemon/statusline.example.json">statusline.example.json</a> for the full set of defaults. This file is optional; statusline.py falls back to sensible defaults (and to any matching keys still in <code>config.json</code>) when it's absent.</p>
@@ -493,66 +493,16 @@ python3 ~/.claude/hooks/vibemon.py --reboot</code></pre>
 
                 <h3>Desktop App</h3>
                 <p>Electron app with system tray for macOS, Windows, Linux. See <a href="#install">Installation</a> above to install.</p>
-                <p>Token can be configured via the system tray menu.</p>
+                <p>Read tokens are configured in the desktop Monitoring window; hook write tokens use the hook configuration.</p>
                 <p>It shows a single character window with a speech bubble that follows it. The window retargets to whichever project is currently active instead of opening one window per project.</p>
                 <p>Features: frameless floating window, always on top, system tray integration, snap to screen corners, click to focus terminal (macOS).</p>
 
                 <h3>ESP32 Hardware</h3>
-                <p>Dedicated LCD display (172&times;320, ST7789V2). Hardware: ESP32-C6-LCD-1.47 board, USB-C cable.</p>
-                <p>Required libraries: LovyanGFX (lovyan03), ArduinoJson (Benoit Blanchon), WebSockets (Markus Sattler, for WebSocket mode).</p>
-                <p>Arduino IDE setup: add the ESP32 Board Manager URL below, install the ESP32 board and required libraries, select the ESP32C6 Dev Module, then upload.</p>
-                <pre><code>https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json</code></pre>
-                <p>WiFi configuration (<code>credentials.h</code>):</p>
-                <pre><code>#define USE_WIFI
-#define WIFI_SSID "YOUR_SSID"
-#define WIFI_PASSWORD "YOUR_PASSWORD"</code></pre>
-                <p>Optional WebSocket mode:</p>
-                <pre><code>#define USE_WEBSOCKET
-#define WS_HOST "ws.vibemon.io"
-#define WS_PORT 443
-#define WS_PATH "/"
-#define WS_USE_SSL true
-#define WS_TOKEN "your-access-token"</code></pre>
-                <p>For SSL, change the Partition Scheme to "Huge APP (3MB No OTA/1MB SPIFFS)".</p>
-                <p>Testing via serial:</p>
-                <pre><code># macOS
-echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/cu.usbmodem1101
-
-# Linux (set baud rate first)
-stty -F /dev/ttyACM0 115200
-echo '{"state":"working","tool":"Bash","project":"my-project"}' > /dev/ttyACM0</code></pre>
+                <p>ESP32 firmware is outside this overhaul. Local serial integration is unchanged. See the <a href="https://github.com/opspresso/vibemon-esp32">firmware repository</a> for hardware setup. The retired cloud WebSocket endpoint is unavailable.</p>
             </section>
 
             <section id="api">
                 <h2>API</h2>
-
-                <h3>WebSocket</h3>
-                <pre><code>wss://ws.vibemon.io?token=your-access-token</code></pre>
-                <p>Message types:</p>
-                <pre><code>// Status update
-{
-  "type": "status",
-  "data": {
-    "state": "working",
-    "tool": "Bash",
-    "project": "my-project",
-    "model": "opus",
-    "memory": 45,
-    "character": "clawd",
-    "usage5h": 36,
-    "usageWeek": 37,
-    "usage5hResetsIn": 154,
-    "usageWeekResetsIn": 4381,
-    "createdAt": "2026-01-01T00:00:00.000Z",
-    "updatedAt": "2026-01-01T00:00:00.000Z"
-  }
-}
-
-// Project deleted
-{
-  "type": "delete",
-  "data": { "project": "my-project" }
-}</code></pre>
 
                 <h3>HTTP API</h3>
                 <pre><code>curl -X POST https://vibemon.io/api/status \
@@ -589,7 +539,7 @@ curl -X DELETE "https://vibemon.io/api/status?project=my-project" \
 # Aggregated metrics
 curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
   -H "Authorization: Bearer your-token"</code></pre>
-                <p>Token format: <code>a-z</code>, <code>0-9</code>, <code>_</code>, <code>-</code>, 8-64 characters (e.g. <code>my_token_123</code>).</p>
+                <p>Generate scoped tokens at <a href="https://vibemon.io/account">your Google account page</a>. Arbitrary token strings are not accepted.</p>
             </section>
 
             <section id="states">
@@ -697,7 +647,7 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
     </div>
 
     <footer>
-        <a href="https://github.com/opspresso/vibemon-docs">github.com/opspresso/vibemon-docs</a>
+        <a href="https://github.com/opspresso/vibemon-web">github.com/opspresso/vibemon-docs</a>
         &middot;
         <a href="https://github.com/opspresso/vibemon-web">vibemon-web</a>
         &middot;

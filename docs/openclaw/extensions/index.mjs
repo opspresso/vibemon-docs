@@ -461,7 +461,7 @@ async function sendHttpToUrl(url, payload) {
       debug(`HTTP failed (${url}): ${response.status}`);
       return false;
     }
-    debug(`HTTP sent (${url}): ${JSON.stringify(payload)}`);
+    debug(`HTTP sent: ${response.status}`);
     return true;
   } catch (err) {
     debug(`HTTP error (${url}): ${err.message}`);
@@ -495,15 +495,17 @@ async function sendVibeMonApi(payload, target = config) {
     project: project,
     tool: payload.tool || "",
     model: payload.model || "",
-    memory: typeof payload.memory === "number" ? payload.memory : 0,
+    ...(typeof payload.memory === "number" ? { memory: payload.memory } : {}),
     character: payload.character || CHARACTER,
   };
 
-  debug(`VibeMon API request: ${apiUrl}`);
-  debug(`VibeMon API payload: ${JSON.stringify(apiPayload)}`);
 
   try {
+    const parsed = new URL(apiUrl);
+    const localTest = process.env.VIBEMON_ALLOW_HTTP_LOCAL === "1" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname) && parsed.protocol === "http:";
+    if ((parsed.protocol !== "https:" && !localTest) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error("Invalid cloud HTTPS URL");
     const response = await fetch(apiUrl, {
+      redirect: "error",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -513,22 +515,22 @@ async function sendVibeMonApi(payload, target = config) {
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
 
-    const responseText = await response.text();
+    await response.body?.cancel();
 
     if (!response.ok) {
-      debug(`VibeMon API failed: ${response.status} - ${responseText}`);
+      debug(`VibeMon API failed: ${response.status}`);
       if (logger) {
-        logger.warn?.(`[vibemon] VibeMon API error: ${response.status} - ${responseText}`);
+        logger.warn?.(`[vibemon] VibeMon API error: ${response.status}`);
       }
       return false;
     }
 
-    debug(`VibeMon API success: ${response.status} - ${responseText}`);
+    debug(`VibeMon API success: ${response.status}`);
     return true;
   } catch (err) {
-    debug(`VibeMon API error: ${err.message}`);
+    debug(`VibeMon API error: ${err.name}`);
     if (logger) {
-      logger.error?.(`[vibemon] VibeMon API error: ${err.message}`);
+      logger.error?.(`[vibemon] VibeMon API error: ${err.name}`);
     }
     return false;
   }
@@ -543,7 +545,7 @@ function buildPayload(state, extra = {}) {
     project: config.projectName,
     character: config.character,
     model: readModelFromConfig(),
-    memory: 0,
+    memory: undefined,
     ...extra,
   };
 
@@ -689,7 +691,7 @@ const plugin = {
           sessionId: ctx?.sessionId || event?.sessionId,
           sessionKey: ctx?.sessionKey || event?.sessionKey,
           model: ctx?.modelId || readModelFromConfig(),
-          memory: 0,
+          memory: undefined,
           tools: new Map(),
         });
       }
@@ -699,7 +701,7 @@ const plugin = {
     }
 
     function metadata(run) {
-      return { model: run?.model || readModelFromConfig(), memory: run?.memory || 0 };
+      return { model: run?.model || readModelFromConfig(), memory: run?.memory };
     }
 
     function reportActive(preferred) {
@@ -764,7 +766,7 @@ const plugin = {
       const run = runs.get(runKey(event, ctx));
       if (!run) return;
       if (typeof event?.model === "string") run.model = event.model;
-      run.memory = extractMemoryPercent(event) ?? 0;
+      run.memory = extractMemoryPercent(event);
     });
     api.on("model_call_started", (event, ctx) => {
       const run = runs.get(runKey(event, ctx));
