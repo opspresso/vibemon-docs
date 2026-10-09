@@ -1,6 +1,6 @@
 # VibeMon setup
 
-Install hooks to send coding-agent summaries to the local Desktop App, the Web service, or both. Python 3 is required. Web uses Google login; Claude and Codex credentials remain on the machine running the hooks.
+Install hooks to send coding-agent summaries to the local Desktop App, the Web service, or both. Python 3 is required. Web uses Google login; agent-provider credentials remain on the machine running the hooks.
 
 ## 1. Prepare credentials
 
@@ -67,6 +67,8 @@ Set `vibemon_token` to the generated write token. Cloud transport requires HTTPS
 
 Launch each monitored account with a stable `VIBEMON_ACCOUNT_ID` and a human-readable `VIBEMON_ACCOUNT_NAME`. Set `CLAUDE_CONFIG_DIR` or `CODEX_HOME` to the corresponding logged-in profile. These values must reach both the tool process and any App process refreshing that profile's usage. Two profiles with the same project label remain separate sources.
 
+Use [Connect coding account](https://vibemon.io/coding-accounts/new) to generate settings for Codex, Claude, Kiro, OpenClaw, OpenCode, or another provider. Each provider can have several account IDs, such as `work` and `personal`. Provider-specific variables, including `VIBEMON_KIRO_ACCOUNT_ID` / `VIBEMON_KIRO_ACCOUNT_NAME`, override the common variables. Launch each agent in its matching signed-in environment; these labels do not switch provider logins. The first report connects the account. Unsupported usage stays unavailable.
+
 The installer honors `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `KIRO_HOME`, and `OPENCODE_CONFIG_DIR`. OpenCode otherwise uses `$XDG_CONFIG_HOME/opencode` or `~/.config/opencode`. Re-run installation after moving a profile or Python interpreter so generated commands match the new paths.
 
 The shared directory contains six required helpers: `vibemon_core.py`, `usage.py`, `usage_cache.py`, `account_context.py`, `cache_io.py`, and `http_client.py`. Use `--vibemon` to repair them together. Installing only one helper can leave imports unresolved.
@@ -91,7 +93,9 @@ Read and write tokens must belong to the same Google owner. Resource collection 
 
 Open [Custom resource](https://vibemon.io/resources/new) to define any resource type and up to 32 numeric measurements. Choose each metric's label, unit, and number or gauge display. Download the definition and use it in your collector. Its first authenticated observation registers the resource; generating the definition alone does not connect a source.
 
-Send measurements with `kind: "resource"` to `/api/v1/ingest` using a write token. Web and App display the supplied definitions and status message. Use null for unavailable measurements. Keep each key's unit and range stable; add a new key when its meaning changes. See the [custom-resource contract](https://github.com/opspresso/vibemon-web/blob/main/docs/api/MONITORING.md#custom-resources) for JSON, limits, and history rules.
+Send measurements with `kind: "resource"` to `/api/v1/ingest` using a write token. Web and App display the supplied definitions and status message. Use null for unavailable measurements. See the [custom-resource contract](https://github.com/opspresso/vibemon-web/blob/main/docs/api/MONITORING.md#custom-resources) for JSON, limits, and history rules.
+
+On the dashboard, **Edit metrics** changes existing resource labels, units, display ranges, and order, including Spark and Kubernetes presets. Reorder with the handles, arrow buttons, or Alt+Up/Down on a handle, then save. Both clients use the saved order; later collection does not overwrite it. New keys or units remain unavailable until the collector supplies matching definitions. Display-only edits do not change receipt time or erase retained measurements.
 
 ## Repair or uninstall
 
