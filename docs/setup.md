@@ -87,6 +87,12 @@ The shared directory contains six required helpers: `vibemon_core.py`, `usage.py
 
 Read and write tokens must belong to the same Google owner. Resource collection is separate from hooks; see the [collector guide](https://github.com/opspresso/vibemon-web/blob/main/collector/README.md) and [monitoring API](https://github.com/opspresso/vibemon-web/blob/main/docs/api/MONITORING.md).
 
+## Custom resources
+
+Open [Custom resource](https://vibemon.io/resources/new) to define any resource type and up to 32 numeric measurements. Choose each metric's label, unit, and number or gauge display. Download the definition and use it in your collector. Its first authenticated observation registers the resource; generating the definition alone does not connect a source.
+
+Send measurements with `kind: "resource"` to `/api/v1/ingest` using a write token. Web and App display the supplied definitions and status message. Use null for unavailable measurements. Keep each key's unit and range stable; add a new key when its meaning changes. See the [custom-resource contract](https://github.com/opspresso/vibemon-web/blob/main/docs/api/MONITORING.md#custom-resources) for JSON, limits, and history rules.
+
 ## Repair or uninstall
 
 | Symptom | Action |
