@@ -72,7 +72,6 @@ def load_config() -> None:
 
     # Map statusline-only config keys to environment variables
     key_mapping = {
-        "token_reset_hours": ("VIBEMON_TOKEN_RESET_HOURS", str),
         "show_project": ("VIBEMON_SHOW_PROJECT", lambda v: "1" if v else "0"),
         "show_git": ("VIBEMON_SHOW_GIT", lambda v: "1" if v else "0"),
         "show_model": ("VIBEMON_SHOW_MODEL", lambda v: "1" if v else "0"),
@@ -98,24 +97,6 @@ load_config()
 
 VIBE_MONITOR_MAX_PROJECTS = 10
 
-
-def _env_int(env_key: str, default: int) -> int:
-    """Parse an int-valued config env var, falling back on any bad input.
-
-    Config values pass through str() with no validation (see load_config),
-    so a typo like "token_reset_hours": "5h" must degrade to the default
-    instead of crashing the statusline on every render.
-    """
-    try:
-        value = os.environ.get(env_key)
-        return int(value) if value else default
-    except (TypeError, ValueError):
-        return default
-
-
-# Token reset window: 5h for Pro/Max, 0 to disable (Enterprise)
-TOKEN_RESET_HOURS = _env_int("VIBEMON_TOKEN_RESET_HOURS", 5)
-TOKEN_RESET_MS = TOKEN_RESET_HOURS * 3600 * 1000
 
 def _show_flag(env_key: str, default: bool) -> bool:
     """Resolve a statusline segment toggle from env (backed by config show_*)."""
@@ -476,116 +457,6 @@ def format_cost(cost: float | str | None) -> str:
         return f"${float(cost):.2f}"
     except (ValueError, TypeError):
         return "$0.00"
-
-
-# ============================================================================
-# Token Reset Functions
-# ============================================================================
-
-
-def get_token_window_path() -> str:
-    """Get the token window state file path."""
-    cache_dir = os.path.dirname(get_cache_path())
-    return os.path.join(cache_dir, "token_window.json")
-
-
-def load_window_start() -> float | None:
-    """Load the token window start time from persistent file."""
-    try:
-        with open(get_token_window_path(), encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("window_start")
-    except (FileNotFoundError, json.JSONDecodeError, IOError):
-        return None
-
-
-def save_window_start(window_start: float) -> None:
-    """Save the token window start time to persistent file (atomic write)."""
-    window_file = get_token_window_path()
-    try:
-        os.makedirs(os.path.dirname(window_file), exist_ok=True)
-        tmpfile = f"{window_file}.tmp.{os.getpid()}"
-        with open(tmpfile, "w", encoding="utf-8") as f:
-            json.dump({"window_start": window_start}, f)
-        os.replace(tmpfile, window_file)
-    except (IOError, OSError):
-        pass
-
-
-def get_token_reset_info(duration_ms: int | float | str | None) -> int:
-    """Calculate remaining time (ms) until the 5-hour token window resets.
-
-    Tracks the 5-hour token window using a persisted start time,
-    so the reset countdown stays accurate across multiple sessions.
-
-    Returns 0 if disabled or unavailable.
-    """
-    if TOKEN_RESET_MS <= 0:
-        return 0
-
-    if duration_ms is None or duration_ms == "null" or duration_ms == 0:
-        return 0
-
-    try:
-        now = time.time()
-        token_reset_seconds = TOKEN_RESET_MS // 1000
-
-        # Load persisted window start (survives across sessions)
-        window_start = load_window_start()
-
-        # Snap to the hour floor: Anthropic resets on the hour boundary
-        if window_start is not None:
-            window_start = window_start - (window_start % 3600)
-
-        # If window expired or doesn't exist, start a new one
-        if window_start is None or (now - window_start) >= token_reset_seconds:
-            window_start = now - (now % 3600)
-            save_window_start(window_start)
-
-        # Calculate remaining time in window
-        remaining_seconds = int(token_reset_seconds - (now - window_start))
-
-        if remaining_seconds <= 0:
-            return 0
-
-        return remaining_seconds * 1000
-    except (ValueError, TypeError):
-        return 0
-
-
-def format_token_reset(remaining_ms: int) -> str:
-    """Format token reset display with color based on urgency.
-
-    Shows remaining time until token reset (e.g. "⏳ 4h35m").
-    Color indicates urgency: dim > 33%, orange 10-33%, red < 10%.
-    """
-    if remaining_ms <= 0:
-        return ""
-
-    # Format remaining time as hours/minutes
-    total_minutes = remaining_ms // 60000
-    hours = total_minutes // 60
-    minutes = total_minutes % 60
-
-    if hours > 0:
-        remaining_display = f"{hours}h{minutes}m"
-    else:
-        remaining_display = f"{minutes}m"
-
-    # Color based on remaining percentage of window
-    if TOKEN_RESET_MS > 0:
-        remaining_pct = remaining_ms * 100 // TOKEN_RESET_MS
-    else:
-        remaining_pct = 100
-
-    if remaining_pct <= 10:
-        color = C_RED
-    elif remaining_pct <= 33:
-        color = C_ORANGE
-    else:
-        color = C_DIM
-
-    return f"{color}⏳ {remaining_display}{C_RESET}"
 
 
 # ============================================================================
@@ -986,12 +857,8 @@ def main() -> None:
         usage_cache = raw_cache.get(cache_key("claude")) if isinstance(raw_cache, dict) else None
     usage_segment = build_usage_segment(usage_cache)
 
-    # Session reset countdown: prefer the real /usage reset time; fall back to
-    # the duration-based 5h-window heuristic when usage data isn't available.
+    # A reset countdown requires an observed provider reset time.
     usage_reset = format_usage_reset(usage_cache)
-    if not usage_reset:
-        remaining_ms = get_token_reset_info(duration)
-        usage_reset = format_token_reset(remaining_ms)
 
     # Extract Claude Code version
     version = data.get("version", "") or ""
@@ -999,7 +866,7 @@ def main() -> None:
         version = str(version)
 
     # Save project metadata to cache in background
-    # Convert "85%" to 85, "" to 0
+    # Convert measured percentages; preserve unknown context as None.
     memory_int = int(context_usage.rstrip("%")) if context_usage else None
     save_cache_background(dir_name, model_display, memory_int, current_dir)
 

@@ -396,11 +396,12 @@ brew install opspresso/tap/vibemon</code></pre>
                 <h3>Non-interactive Install (AI agents, CI)</h3>
                 <p>For headless setups where a GUI app isn't available:</p>
                 <pre><code># Choose exactly one platform + your token
-curl -fsSL https://vibemon.io/install/install.py | python3 - --claude --token YOUR_WRITE_TOKEN
+# Supply VIBEMON_WRITE_TOKEN through your secret manager or environment.
+curl -fsSL https://vibemon.io/install/install.py | python3 - --claude
 # --codex / --kiro / --openclaw / --opencode for other tools, --all for every detected tool</code></pre>
                 <p>Interactive prompt version:</p>
                 <pre><code>curl -fsSL https://vibemon.io/install/install.py | python3</code></pre>
-                <p>Or point your AI agent at <a href="./setup.md">docs/setup.md</a> (<code>https://vibemon.io/install/setup.md</code>) and have it follow the instructions directly.</p>
+                <p>Or point your AI agent at <a href="./setup.md">setup.md</a> (<code>https://vibemon.io/install/setup.md</code>) and have it follow the instructions directly.</p>
 
                 <h3>Local Install</h3>
                 <pre><code>git clone https://github.com/opspresso/vibemon-web.git
@@ -432,7 +433,7 @@ python3 public/install/install.py</code></pre>
                         <tr><td><code>vibemon_token</code></td><td>Generated write token (from /account)</td><td></td></tr>
                     </tbody>
                 </table>
-                <p>Claude Code's statusline reads a separate <code>~/.vibemon/statusline.json</code> for display toggles (e.g. <code>show_cost</code>, <code>show_git</code>, <code>show_model</code>, <code>show_tokens</code>) and the fallback <code>token_reset_hours</code> setting — see <a href="./vibemon/statusline.example.json">statusline.example.json</a> for the full set of defaults. This file is optional; statusline.py falls back to sensible defaults (and to any matching keys still in <code>config.json</code>) when it's absent.</p>
+                <p>Claude Code's statusline reads a separate <code>~/.vibemon/statusline.json</code> for display toggles (e.g. <code>show_cost</code>, <code>show_git</code>, <code>show_model</code>, <code>show_tokens</code>) — see <a href="./vibemon/statusline.example.json">statusline.example.json</a> for the full set of defaults. This file is optional; statusline.py falls back to sensible defaults (and to any matching keys still in <code>config.json</code>) when it's absent.</p>
 
                 <p>The Claude Code installer also places a standalone refresher at <code>~/.vibemon/usage.py</code>. For Claude, it fetches plan usage directly from Anthropic's OAuth usage API using the local Claude Code login token (no active session required), falling back to a <code>claude -p "/usage"</code> subprocess when a token isn't available or the API call fails. For Codex, it queries the same account-level usage API Codex CLI's own <code>/status</code> polls using the local Codex login token, falling back to the newest local session log. Either way it writes the shared <code>~/.vibemon/cache/usage.json</code>, so the Desktop app can run it (<code>python3 ~/.vibemon/usage.py --max-age 600</code>) on startup or on a schedule to keep usage data fresh even when no Claude Code or Codex session is active. Since the <code>claude -p "/usage"</code> fallback is itself a real Claude Code session, the Desktop app sets <code>VIBEMON_SUPPRESS_HOOKS=1</code> in its environment so the spawned session's own hooks don't report status back. Independently of that env var, the hooks also skip any session whose cwd is <code>~/.vibemon</code> itself, so spawners that don't set the variable (older Desktop app versions, manual <code>usage.py</code> runs) can't surface a phantom <code>.vibemon</code> project either.</p>
 
@@ -647,7 +648,7 @@ curl "https://vibemon.io/api/metrics?granularity=HOUR&range=24h" \
     </div>
 
     <footer>
-        <a href="https://github.com/opspresso/vibemon-web">github.com/opspresso/vibemon-docs</a>
+        <a href="https://github.com/opspresso/vibemon-web">github.com/opspresso/vibemon-web</a>
         &middot;
         <a href="https://github.com/opspresso/vibemon-web">vibemon-web</a>
         &middot;

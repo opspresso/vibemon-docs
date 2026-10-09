@@ -6,6 +6,7 @@ from account_context import cache_key
 
 import json
 import math
+import os
 import re
 import time
 from datetime import datetime
@@ -14,11 +15,49 @@ from typing import Any
 from cache_io import update_json_cache
 
 
+def reverse_jsonl(path: str):
+    """Read complete JSONL records from at most the newest 1 MiB."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            position = f.tell()
+            remainder = b""
+            remaining_bytes = 1024 * 1024
+            while position > 0 and remaining_bytes > 0:
+                chunk_size = min(65536, position, remaining_bytes)
+                remaining_bytes -= chunk_size
+                position -= chunk_size
+                f.seek(position)
+                remainder = f.read(chunk_size) + remainder
+                lines = remainder.split(b"\n")
+                remainder = lines[0]
+                for line in reversed(lines[1:]):
+                    if not line:
+                        continue
+                    try:
+                        value = json.loads(line)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    if isinstance(value, dict):
+                        yield value
+            if position == 0 and remainder:
+                try:
+                    value = json.loads(remainder)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return
+                if isinstance(value, dict):
+                    yield value
+    except OSError:
+        return
+
+
+
 def parse_epoch(value: Any) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         pass
     if isinstance(value, str):
@@ -235,6 +274,9 @@ def save_usage_cache(
             provider = cache_key(provider)
             if not isinstance(value, dict):
                 continue
+            observed_at = parse_epoch(value.get("updated_at", updated_at))
+            if observed_at is None or observed_at <= 0 or observed_at > updated_at + 30:
+                continue
             existing = payload.get(provider)
             merged = dict(existing) if isinstance(existing, dict) else {}
             if replace:
@@ -243,7 +285,7 @@ def save_usage_cache(
                         merged.pop(key)
             for key, item in value.items():
                 if is_usage_bucket(key) and isinstance(item, dict):
-                    merged[key] = {**item, "updated_at": updated_at}
+                    merged[key] = {**item, "updated_at": observed_at}
                 else:
                     merged[key] = item
             for key in [name for name in merged if is_usage_bucket(name)]:
@@ -251,7 +293,7 @@ def save_usage_cache(
                 resets_at = parse_epoch(bucket.get("resets_at")) if isinstance(bucket, dict) else None
                 if resets_at is not None and resets_at <= updated_at:
                     merged.pop(key)
-            payload[provider] = {**merged, "updated_at": updated_at}
+            payload[provider] = {**merged, "updated_at": observed_at}
         # Retain ts for older installed hooks; freshness decisions use the
         # provider-level updated_at above.
         payload["ts"] = updated_at

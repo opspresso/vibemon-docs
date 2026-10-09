@@ -52,6 +52,8 @@ from usage_cache import (
     is_usage_bucket,
     load_usage_cache as _load_usage_cache,
     parse_usage_output,
+    parse_epoch,
+    reverse_jsonl,
     save_usage_cache as _save_usage_cache,
     week_bucket_key,
 )
@@ -158,6 +160,19 @@ def read_claude_token() -> str | None:
         return None
 
 
+def _usage_response(request) -> dict[str, Any] | None:
+    """Read a bounded provider summary without exposing response or credential data."""
+    try:
+        with open_credential_request(request, timeout=CLAUDE_API_TIMEOUT_SECONDS) as response:
+            raw = response.read(64 * 1024 + 1)
+        if len(raw) > 64 * 1024:
+            return None
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
 def fetch_claude_usage_live() -> dict[str, Any] | None:
     """Fetch plan usage directly from Anthropic's OAuth usage API — the same
     endpoint the official /usage command uses — via the local Claude Code
@@ -180,13 +195,8 @@ def fetch_claude_usage_live() -> dict[str, Any] | None:
             "anthropic-beta": "oauth-2025-04-20",
         },
     )
-    try:
-        with open_credential_request(request, timeout=CLAUDE_API_TIMEOUT_SECONDS) as resp:
-            data = json.loads(resp.read())
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
-        return None
-
-    if not isinstance(data, dict):
+    data = _usage_response(request)
+    if data is None:
         return None
 
     result: dict[str, Any] = {}
@@ -295,13 +305,8 @@ def fetch_codex_usage_live() -> dict[str, Any] | None:
             "User-Agent": "codex-cli",
         },
     )
-    try:
-        with open_credential_request(request, timeout=CLAUDE_API_TIMEOUT_SECONDS) as resp:
-            data = json.loads(resp.read())
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
-        return None
-
-    if not isinstance(data, dict):
+    data = _usage_response(request)
+    if data is None:
         return None
 
     rate_limit = data.get("rate_limit") if isinstance(data.get("rate_limit"), dict) else {}
@@ -353,20 +358,12 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
                 continue
     files.sort(key=lambda item: item[1], reverse=True)
 
-    for path, _mtime in files[:8]:
-        try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.read().splitlines()
-        except (IOError, OSError):
+    for path, mtime in files[:8]:
+        if time.time() - mtime > 1800:
             continue
-        for line in reversed(lines):
-            if "rate_limits" not in line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(obj, dict):
+        for obj in reverse_jsonl(path):
+            observed_at = parse_epoch(obj.get("timestamp", mtime))
+            if observed_at is None or not -30 <= time.time() - observed_at <= 1800:
                 continue
             payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
             rate_limits = payload.get("rate_limits") if isinstance(payload, dict) else None
@@ -382,7 +379,7 @@ def get_codex_usage_from_sessions() -> dict[str, Any] | None:
                     week = build_bucket(raw_window, "used_percent")
             if session is None and week is None:
                 continue
-            result: dict[str, Any] = {}
+            result: dict[str, Any] = {"updated_at": observed_at}
             if session is not None:
                 result["session"] = session
             if week is not None:

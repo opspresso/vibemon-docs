@@ -13,7 +13,7 @@ Usage (Non-interactive for AI agents):
   curl -fsSL https://vibemon.io/install/install.py | python3 - --kiro
   curl -fsSL https://vibemon.io/install/install.py | python3 - --openclaw
   curl -fsSL https://vibemon.io/install/install.py | python3 - --opencode
-  curl -fsSL https://vibemon.io/install/install.py | python3 - --claude --token YOUR_TOKEN
+  # Supply VIBEMON_WRITE_TOKEN through the environment.
   curl -fsSL https://vibemon.io/install/install.py | python3 - --all --yes
 
 Usage (Windows PowerShell):
@@ -139,7 +139,6 @@ LEGACY_KIRO_HOOK_FILES = (
 # All recognized statusline-only config keys, used to migrate values out of
 # a pre-split single config.json into the new statusline.json.
 STATUSLINE_KEYS = frozenset({
-    "token_reset_hours",
     "show_project", "show_git", "show_model", "show_tokens", "show_cost",
     "show_duration", "show_lines", "show_memory", "show_usage",
     "show_usage_reset", "show_version", "show_statusline",
@@ -196,27 +195,28 @@ def mask_token(token: str) -> str:
     return f"{token[:4]}{'*' * (len(token) - 8)}{token[-4:]}"
 
 
-TOKEN_PATTERN = re.compile(r"^[a-z0-9_-]{8,64}$")
+TOKEN_PATTERN = re.compile(r"^vm_[a-f0-9]{60}$")
 
 
-def warn_if_invalid_token(token: str) -> None:
-    """Print a warning if token doesn't match the expected format (8-64 chars: a-z, 0-9, _, -)."""
-    if not TOKEN_PATTERN.match(token):
-        print(f"  {colored('!', 'yellow')} Warning: token format looks invalid (expected 8-64 chars: a-z, 0-9, _, -)")
+def validate_token(token: str) -> None:
+    """Accept only the server-generated API credential format."""
+    if not TOKEN_PATTERN.fullmatch(token):
+        raise ValueError("Enter a generated write token from https://vibemon.io/account")
 
 
 def configure_token(config: dict, cli_token: str = None) -> dict:
-    """Configure VibeMon API token. Uses CLI token if provided, otherwise interactive."""
+    """Configure a write credential from CLI, environment, or hidden input."""
     global AUTO_APPROVE, NON_INTERACTIVE
     current_token = config.get("vibemon_token", "")
 
     print(f"\n{colored('VibeMon API Token Configuration:', 'cyan')}")
     print("  Create a write token at https://vibemon.io/account")
 
-    # If token provided via CLI, use it directly
-    if cli_token:
-        config["vibemon_token"] = cli_token
-        print(f"  {colored('✓', 'green')} Token set from CLI argument")
+    supplied = cli_token or os.environ.get("VIBEMON_WRITE_TOKEN")
+    if supplied:
+        validate_token(supplied)
+        config["vibemon_token"] = supplied
+        print(f"  {colored('✓', 'green')} Write token configured")
         return config
 
     # No prompt available and no --token: keep whatever is already configured.
@@ -224,7 +224,7 @@ def configure_token(config: dict, cli_token: str = None) -> dict:
         if current_token:
             print(f"  {colored('✓', 'green')} Token unchanged: {mask_token(current_token)}")
         else:
-            print(f"  {colored('!', 'yellow')} No token configured (use --token to set)")
+            print(f"  {colored('!', 'yellow')} No token configured (set VIBEMON_WRITE_TOKEN)")
         return config
 
     # Interactive mode
@@ -234,7 +234,7 @@ def configure_token(config: dict, cli_token: str = None) -> dict:
             try:
                 new_token = getpass.getpass("  Enter new token: ").strip()
                 if new_token:
-                    warn_if_invalid_token(new_token)
+                    validate_token(new_token)
                     config["vibemon_token"] = new_token
                     print(f"  {colored('✓', 'green')} Token updated")
                 else:
@@ -248,7 +248,7 @@ def configure_token(config: dict, cli_token: str = None) -> dict:
         try:
             token = getpass.getpass("  Enter token (or press Enter to skip): ").strip()
             if token:
-                warn_if_invalid_token(token)
+                validate_token(token)
                 config["vibemon_token"] = token
                 print(f"  {colored('✓', 'green')} Token saved")
             else:
@@ -371,17 +371,14 @@ def download_file(url: str) -> str:
             return response.read().decode("utf-8")
     except (URLError, OSError) as e:
         # URLError is an OSError subclass, but a stalled read raises the bare
-        # OSError/TimeoutError, which an URLError-only catch would let escape
-        # out of load_manifest() — contradicting its "missing manifest is a
-        # warning" contract.
+        # OSError/TimeoutError. Both must reach the integrity failure path.
         raise RuntimeError(f"Failed to download {url}: {e}")
 
 
 MANIFEST_PATH = "manifest.json"
 
 # sha256 of every file the installer copies verbatim, keyed by source path.
-# Empty when running from a local checkout (the checkout is the source of
-# truth) or when manifest.json could not be fetched.
+# Local checkouts are read directly. Remote source requires a valid manifest.
 REMOTE_MANIFEST = {}
 _MANIFEST_LOADED = False
 
@@ -391,43 +388,32 @@ class IntegrityError(RuntimeError):
 
 
 def load_manifest(source) -> dict:
-    """Fetch and cache the published sha256 manifest (online mode only).
-
-    A missing manifest is a warning, not a failure: it must not block installs
-    when only the manifest deploy lagged. A manifest that *is* present and
-    disagrees with a download is fatal for that file — see verify_content().
-    """
+    """Require a complete integrity reference before downloading remote files."""
     global _MANIFEST_LOADED, REMOTE_MANIFEST
+    if not source.is_online:
+        return {}
     if _MANIFEST_LOADED:
         return REMOTE_MANIFEST
-    _MANIFEST_LOADED = True
-    if not source.is_online:
-        return REMOTE_MANIFEST
     try:
-        REMOTE_MANIFEST = json.loads(download_file(f"{DOCS_BASE_URL}/{MANIFEST_PATH}"))["files"]
-        print(f"  {colored('✓', 'green')} manifest loaded ({len(REMOTE_MANIFEST)} files)")
-    except (RuntimeError, ValueError, KeyError, TypeError) as e:
-        print(f"  {colored('!', 'yellow')} Could not load manifest.json ({e}) — integrity checks skipped")
-        REMOTE_MANIFEST = {}
-    return REMOTE_MANIFEST
+        files = json.loads(download_file(f"{DOCS_BASE_URL}/{MANIFEST_PATH}"))["files"]
+        if not isinstance(files, dict) or not files or any(not isinstance(key, str) or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest) for key, digest in files.items()):
+            raise ValueError("Invalid manifest")
+    except (RuntimeError, ValueError, KeyError, TypeError) as error:
+        raise IntegrityError("Cannot verify installation files. Publish the source and manifest together, then retry.") from error
+    REMOTE_MANIFEST = files
+    _MANIFEST_LOADED = True
+    print(f"  {colored('✓', 'green')} manifest loaded ({len(files)} files)")
+    return files
 
 
 def verify_content(path: str, content: str) -> None:
-    """Raise IntegrityError if `content` doesn't match the manifest hash for `path`.
-
-    Paths absent from the manifest (merged configs, config examples) are not
-    covered by design — their installed form never matches a source hash.
-    """
+    """Verify downloaded source bytes before copying or merging them."""
     expected = REMOTE_MANIFEST.get(path)
     if not expected:
-        return
+        raise IntegrityError(f"{path} has no published integrity reference; nothing was written")
     actual = hashlib.sha256(content.encode("utf-8")).hexdigest()
     if actual != expected:
-        raise IntegrityError(
-            f"{path} failed its integrity check "
-            f"(expected {expected[:12]}…, got {actual[:12]}…) — nothing was written. "
-            "Retry; if it persists, the published file may be corrupt."
-        )
+        raise IntegrityError(f"{path} failed its integrity check; nothing was written. Publish matching source and manifest files, then retry.")
 
 
 def show_diff(old_content: str, new_content: str, filename: str) -> bool:
@@ -976,6 +962,7 @@ class FileSource:
         write it to disk; a mismatch raises IntegrityError.
         """
         if self.is_online:
+            load_manifest(self)
             url = f"{DOCS_BASE_URL}/{path}"
             content = download_file(url)
             verify_content(path, content)
@@ -1700,7 +1687,7 @@ def remove_path(path: Path, description: str) -> None:
         path.unlink()
         print(f"  {colored('✓', 'green')} removed {description}")
     except OSError as e:
-        print(f"  {colored('✗', 'red')} could not remove {description}: {e}")
+        raise RuntimeError(f"Could not remove {description}") from e
 
 
 def _uninstall_hooks_from_json(config_file: Path, hooks_key_path: list, label: str) -> None:
@@ -1866,7 +1853,7 @@ def uninstall_openclaw(source: FileSource = None, cli_token: str = None) -> bool
             shutil.rmtree(plugin_dir)
             print(f"  {colored('✓', 'green')} removed {plugin_dir}")
         except OSError as e:
-            print(f"  {colored('✗', 'red')} could not remove {plugin_dir}: {e}")
+            raise RuntimeError("Could not remove the VibeMon OpenClaw plugin") from e
 
     print("\nRefreshing OpenClaw plugin registry:")
     refresh_openclaw_plugin_registry()
@@ -1924,9 +1911,9 @@ UNINSTALLERS = {
 
 
 def valid_token_arg(value: str) -> str:
-    """Validate --token format for argparse (8-64 chars: a-z, 0-9, _, -)."""
+    """Validate an explicitly supplied server-generated token."""
     if not TOKEN_PATTERN.match(value):
-        raise argparse.ArgumentTypeError("invalid token format (expected 8-64 chars: a-z, 0-9, _, -)")
+        raise argparse.ArgumentTypeError("invalid token format (use a generated write token)")
     return value
 
 
@@ -1943,7 +1930,7 @@ Examples:
     curl -fsSL https://vibemon.io/install/install.py | python3 - --claude
     curl -fsSL https://vibemon.io/install/install.py | python3 - --codex
     curl -fsSL https://vibemon.io/install/install.py | python3 - --opencode
-    curl -fsSL https://vibemon.io/install/install.py | python3 - --claude --token my_token
+    # Supply VIBEMON_WRITE_TOKEN through the environment.
     curl -fsSL https://vibemon.io/install/install.py | python3 - --all --yes
 
   Windows PowerShell:
@@ -1979,7 +1966,7 @@ another selected platform succeeded; a run in which nothing succeeded exits 1.
 
     # Configuration options
     parser.add_argument("--token", type=valid_token_arg, metavar="TOKEN",
-                        help="VibeMon API token (8-64 chars: a-z, 0-9, _, -)")
+                        help="Generated write token; prefer VIBEMON_WRITE_TOKEN to keep it out of process arguments")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Auto-approve all prompts, including replacing an existing "
                              "statusLine. Does not select a platform by itself; combine with "
@@ -2135,4 +2122,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except IntegrityError as error:
+        print(f"Installation failed: {error}", file=sys.stderr)
+        sys.exit(1)

@@ -30,7 +30,7 @@ from urllib.request import Request, urlopen
 
 from account_context import cloud_context, project_cache_key
 from http_client import open_credential_request
-from usage_cache import get_fresh_provider, load_usage_cache, model_week_bucket
+from usage_cache import get_fresh_provider, load_usage_cache, model_week_bucket, reverse_jsonl
 
 try:
     import fcntl
@@ -329,38 +329,6 @@ def get_project_metadata(project: str, cwd: str | None = None) -> dict[str, Any]
     return entry
 
 
-def _reverse_jsonl(path: str):
-    """Yield JSON objects from a JSONL file, newest first."""
-    try:
-        with open(path, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            position = f.tell()
-            remainder = b""
-            while position > 0:
-                chunk_size = min(65536, position)
-                position -= chunk_size
-                f.seek(position)
-                remainder = f.read(chunk_size) + remainder
-                lines = remainder.split(b"\n")
-                remainder = lines[0]
-                for line in reversed(lines[1:]):
-                    if not line:
-                        continue
-                    try:
-                        value = json.loads(line)
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        continue
-                    if isinstance(value, dict):
-                        yield value
-            if remainder:
-                try:
-                    value = json.loads(remainder)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    return
-                if isinstance(value, dict):
-                    yield value
-    except OSError:
-        return
 
 
 def get_codex_context_usage(data: dict[str, Any]) -> int | None:
@@ -384,7 +352,7 @@ def get_codex_context_usage(data: dict[str, Any]) -> int | None:
             return None
         transcript_path = max(matches, key=os.path.getmtime)
 
-    for entry in _reverse_jsonl(transcript_path):
+    for entry in reverse_jsonl(transcript_path):
         if entry.get("type") != "event_msg":
             continue
         payload = entry.get("payload")

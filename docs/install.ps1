@@ -16,7 +16,8 @@
   irm https://vibemon.io/install/install.ps1 | iex
 
 .EXAMPLE
-  & ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --claude --token my_token
+  & ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --claude
+  # Enter the write token at the hidden prompt, or set VIBEMON_WRITE_TOKEN.
 
 .EXAMPLE
   & ([scriptblock]::Create((irm https://vibemon.io/install/install.ps1))) --uninstall --claude
@@ -56,16 +57,14 @@ Settings > Apps > Advanced app settings > App execution aliases.
 
     $tempScript = Join-Path ([IO.Path]::GetTempPath()) "vibemon-install-$PID.py"
     try {
-        Invoke-WebRequest -Uri "$docsBaseUrl/install.py" -OutFile $tempScript -UseBasicParsing
+        Invoke-WebRequest -Uri "$docsBaseUrl/install.py" -OutFile $tempScript -UseBasicParsing -TimeoutSec 30
 
         $expected = Get-VibeMonInstallerHash -DocsBaseUrl $docsBaseUrl
-        if ($expected) {
-            $actual = (Get-FileHash -Path $tempScript -Algorithm SHA256).Hash
-            if ($actual -ne $expected) {
-                throw "install.py failed its integrity check (expected $expected, got $actual). Nothing was run; retry, and if it persists the published file may be corrupt."
-            }
-            Write-Host '  Installer verified against manifest.json'
+        $actual = (Get-FileHash -Path $tempScript -Algorithm SHA256).Hash
+        if ($actual -ne $expected) {
+            throw 'install.py failed its integrity check. Nothing was run; publish the installer and manifest together before retrying.'
         }
+        Write-Host '  Installer verified against manifest.json'
 
         # $args of the *caller* is forwarded by the call at the bottom of this
         # file, so platform flags reach install.py unchanged.
@@ -99,7 +98,7 @@ function Find-VibeMonPython {
     foreach ($candidate in $candidates) {
         if (-not (Get-Command $candidate.Exe -ErrorAction SilentlyContinue)) { continue }
         try {
-            $probe = & $candidate.Exe @($candidate.PrefixArgs) '-c' 'import sys; print(sys.version.split()[0])' 2>$null
+            $probe = & $candidate.Exe @($candidate.PrefixArgs) '-c' 'import sys; print(sys.version.split()[0]); sys.exit(0 if sys.version_info.major == 3 else 1)' 2>$null
         } catch {
             continue
         }
@@ -117,24 +116,17 @@ function Find-VibeMonPython {
 function Get-VibeMonInstallerHash {
     <#
     .SYNOPSIS
-      Published sha256 of install.py, or $null when the manifest is unavailable.
+      Required published SHA-256 of install.py.
 
     .DESCRIPTION
-      Mirrors the Desktop app's check. A missing or malformed manifest is a
-      warning rather than a failure so a lagging manifest deploy can't block
-      installs; a manifest that *is* present and disagrees is fatal.
+      A missing or malformed manifest stops installation before execution.
+      Publish the installer and manifest together.
     #>
     param([Parameter(Mandatory)][string]$DocsBaseUrl)
 
-    try {
-        $manifest = Invoke-RestMethod -Uri "$DocsBaseUrl/manifest.json" -UseBasicParsing
-    } catch {
-        Write-Host "  ! Could not load manifest.json ($($_.Exception.Message)) - integrity check skipped"
-        return $null
-    }
-    if (-not $manifest.installer) {
-        Write-Host '  ! manifest.json has no installer hash - integrity check skipped'
-        return $null
+    $manifest = Invoke-RestMethod -Uri "$DocsBaseUrl/manifest.json" -UseBasicParsing -TimeoutSec 30
+    if ($manifest.installer -isnot [string] -or $manifest.installer -notmatch '^[a-fA-F0-9]{64}$') {
+        throw 'manifest.json must contain a valid installer SHA-256. Nothing was run.'
     }
     return $manifest.installer.ToUpperInvariant()
 }
