@@ -6,7 +6,7 @@ Install hooks to send coding-agent summaries to the local Desktop App, the Web s
 
 1. Sign in at [Account](https://vibemon.io/account).
 2. Create a named token with `write` permission for hooks.
-3. Create a separate `read` token for the App or browser dashboard.
+3. Create a separate `read` token for the Desktop App. The Web dashboard uses your Google login.
 4. Copy each token when created. Its plaintext is shown only once.
 
 Provide the write token through `VIBEMON_WRITE_TOKEN`, using your environment or secret manager. Interactive installation offers a hidden prompt. Do not put tokens in URLs or shell history. Existing user-chosen tokens must be replaced with generated tokens.
