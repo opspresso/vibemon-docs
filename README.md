@@ -1,10 +1,19 @@
 # VibeMon Docs compatibility mirror
 
-The canonical source is [vibemon-web](https://github.com/opspresso/vibemon-web). This repository publishes a generated snapshot from `public/install/` to `docs/` so existing URLs keep working. `docs/CNAME` remains owned here.
+This repository publishes a generated snapshot of `vibemon-web/public/install/` to `docs/`. It preserves existing download URLs; `docs/CNAME` remains owned here.
 
-Use [the setup guide](https://vibemon.io/docs) for installation and [Web's documentation](https://github.com/opspresso/vibemon-web/blob/main/docs/README.md) for API and architecture details. Tests, installer manifest generation, and source edits belong in Web.
+## Find the right guide
 
-## Update the snapshot
+- [VibeMon documentation](https://vibemon.io/docs) — Login, tokens, resources, coding accounts, and Desktop connection.
+- [Hook installation](https://vibemon.io/docs/setup) — Install, configure, verify, and repair hooks.
+- [Monitoring API](https://vibemon.io/docs/api/monitoring) — Cloud authentication and data contracts.
+- [Desktop documentation](https://github.com/opspresso/vibemon-app/blob/main/docs/README.md) — App behavior, local API, and packaging.
+
+## Maintain this mirror
+
+The canonical source is [vibemon-web](https://github.com/opspresso/vibemon-web), a private maintainer repository. Source edits, tests, and generated-content changes belong there. Repository access is required to update or verify this mirror; reading the public guides does not require that access.
+
+### Update the snapshot
 
 Commit the Web source, then run from its checkout:
 
